@@ -416,12 +416,14 @@ def load_model(model_path: Path) -> ZayaForCausalLM:
     return model
 
 
-def generate(model, tokenizer, prompt: str, max_new_tokens: int, temperature: float):
-    messages = [{"role": "user", "content": prompt}]
+def render_messages(tokenizer, messages: list[dict[str, str]]) -> str:
     if hasattr(tokenizer, "apply_chat_template"):
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    else:
-        text = prompt
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    return "\n".join(f"{message['role']}: {message['content']}" for message in messages) + "\nassistant:"
+
+
+def generate_from_messages(model, tokenizer, messages: list[dict[str, str]], max_new_tokens: int, temperature: float):
+    text = render_messages(tokenizer, messages)
     token_ids = tokenizer(text, return_tensors="np")["input_ids"]
     tokens = mx.array(token_ids)
     for _ in range(max_new_tokens):
@@ -436,6 +438,11 @@ def generate(model, tokenizer, prompt: str, max_new_tokens: int, temperature: fl
             break
         yield token
         tokens = mx.concatenate([tokens, next_token], axis=1)
+
+
+def generate(model, tokenizer, prompt: str, max_new_tokens: int, temperature: float):
+    messages = [{"role": "user", "content": prompt}]
+    yield from generate_from_messages(model, tokenizer, messages, max_new_tokens, temperature)
 
 
 def main() -> None:
