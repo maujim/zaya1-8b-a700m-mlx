@@ -12,19 +12,20 @@ Review the current hand-written MLX ZAYA1-8B port for correctness and safety wit
 ## Checklist
 - [x] Inspect current git state and code structure.
 - [x] Locate installed Zyphra Transformers ZAYA implementation for comparison.
-- [ ] Compare config/model assumptions against upstream implementation.
+- [x] Compare config/model assumptions against upstream implementation.
 - [x] Identify no-full-load verification strategy.
 - [ ] Fix import/path robustness for chat script if needed.
 - [x] Make chat startup validation optional/safe.
 - [x] Add lightweight architecture/key/shape inspection tooling.
-- [ ] Add tests or compile checks that avoid full model execution.
+- [x] Add tests or compile checks that avoid full model execution.
 - [ ] Update README with safety and validation notes.
 - [ ] Commit each coherent change.
 
 ## Verification
 - `uv run python -m py_compile scripts/*.py` passed.
 - `uv run python scripts/inspect_zaya_port.py --local-files-only` passed: 2483 HF indexed tensors, 2483 MLX parameters, 0 missing, 0 extra. Does not load full tensors.
-- Commit: `5445b04 Add safe ZAYA port inspection`.
+- Enhanced inspection now also validates shapes after conv sanitize rules: 0 mismatches.
+- Commits: `5445b04 Add safe ZAYA port inspection`, `d758f2b Validate MLX port tensor shapes safely`, `fbb0ff6 Reduce MLX expert routing memory spike`.
 
 ## Notes
 - User explicitly said not to run the model because it crashes/times out.
