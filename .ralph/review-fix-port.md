@@ -19,13 +19,13 @@ Review the current hand-written MLX ZAYA1-8B port for correctness and safety wit
 - [x] Add lightweight architecture/key/shape inspection tooling.
 - [x] Add tests or compile checks that avoid full model execution.
 - [x] Update README with safety and validation notes.
-- [ ] Commit each coherent change.
+- [x] Commit each coherent change.
 
 ## Verification
 - `uv run python -m py_compile scripts/*.py` passed.
 - `uv run python scripts/inspect_zaya_port.py --local-files-only` passed: 2483 HF indexed tensors, 2483 MLX parameters, 0 missing, 0 extra. Does not load full tensors.
 - Enhanced inspection now also validates shapes after conv sanitize rules: 0 mismatches.
-- Commits: `5445b04 Add safe ZAYA port inspection`, `d758f2b Validate MLX port tensor shapes safely`, `fbb0ff6 Reduce MLX expert routing memory spike`, `bf72c28 Add tiny MLX port smoke test`.
+- Commits: `5445b04 Add safe ZAYA port inspection`, `d758f2b Validate MLX port tensor shapes safely`, `fbb0ff6 Reduce MLX expert routing memory spike`, `bf72c28 Add tiny MLX port smoke test`, `fd49982 Record final port review findings`, `f45961e Ignore Ralph state files`.
 - `uv run python scripts/smoke_tiny_zaya_mlx.py` passed: tiny synthetic config exercises attention, CCA, MoE routing, LM head, and one-token generation without loading ZAYA weights.
 
 ## Notes
