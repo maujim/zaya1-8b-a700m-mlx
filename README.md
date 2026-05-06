@@ -24,6 +24,15 @@ uv run python scripts/check_model.py
 
 ## Run
 
+Minimal terminal chat:
+
+```bash
+uv run python scripts/chat_zaya_mlx.py --local-files-only
+```
+
+The chat validates the MLX port by generating one token at startup, then accepts messages at the `you>` prompt. Press
+Return on an empty prompt or Ctrl-D to exit.
+
 MLX runner:
 
 ```bash
