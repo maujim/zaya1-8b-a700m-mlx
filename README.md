@@ -30,8 +30,15 @@ Minimal terminal chat:
 uv run python scripts/chat_zaya_mlx.py --local-files-only
 ```
 
-The chat validates the MLX port by generating one token at startup, then accepts messages at the `you>` prompt. Press
-Return on an empty prompt or Ctrl-D to exit.
+The chat loads the experimental MLX port, then accepts messages at the `you>` prompt. Press Return on an empty prompt or
+Ctrl-D to exit. To force a one-token startup generation check, add `--validate-startup`; this can be slow or unstable on
+memory-constrained Macs.
+
+Inspect the local MLX module/key mapping without loading the 8B weights:
+
+```bash
+uv run python scripts/inspect_zaya_port.py --local-files-only
+```
 
 MLX runner:
 

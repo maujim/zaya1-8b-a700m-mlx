@@ -20,24 +20,30 @@ def main() -> None:
     parser.add_argument("--model-path", type=Path, help="Use an existing Hugging Face snapshot directory.")
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument(
+        "--validate-startup",
+        action="store_true",
+        help="Generate one token before entering chat. This loads/runs the full 8B MLX port and may be slow or unstable.",
+    )
     args = parser.parse_args()
 
     model_path = args.model_path or Path(snapshot_download(MODEL_ID, local_files_only=args.local_files_only))
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     model = load_model(model_path)
 
-    validation = list(
-        generate_from_messages(
-            model,
-            tokenizer,
-            [{"role": "user", "content": "Say hello."}],
-            max_new_tokens=1,
-            temperature=0.0,
+    if args.validate_startup:
+        validation = list(
+            generate_from_messages(
+                model,
+                tokenizer,
+                [{"role": "user", "content": "Say hello."}],
+                max_new_tokens=1,
+                temperature=0.0,
+            )
         )
-    )
-    if not validation:
-        raise SystemExit("MLX port validation failed: no token generated")
-    print(f"MLX port validation passed: token_id={validation[0]}")
+        if not validation:
+            raise SystemExit("MLX port validation failed: no token generated")
+        print(f"MLX port validation passed: token_id={validation[0]}")
 
     messages: list[dict[str, str]] = []
     while True:
