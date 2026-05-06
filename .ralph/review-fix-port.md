@@ -10,18 +10,22 @@ Review the current hand-written MLX ZAYA1-8B port for correctness and safety wit
 - Commit frequently with descriptive messages.
 
 ## Checklist
-- [ ] Inspect current git state and code structure.
-- [ ] Locate installed Zyphra Transformers ZAYA implementation for comparison.
+- [x] Inspect current git state and code structure.
+- [x] Locate installed Zyphra Transformers ZAYA implementation for comparison.
 - [ ] Compare config/model assumptions against upstream implementation.
-- [ ] Identify no-full-load verification strategy.
+- [x] Identify no-full-load verification strategy.
 - [ ] Fix import/path robustness for chat script if needed.
-- [ ] Make chat startup validation optional/safe.
-- [ ] Add lightweight architecture/key/shape inspection tooling.
+- [x] Make chat startup validation optional/safe.
+- [x] Add lightweight architecture/key/shape inspection tooling.
 - [ ] Add tests or compile checks that avoid full model execution.
 - [ ] Update README with safety and validation notes.
 - [ ] Commit each coherent change.
 
 ## Verification
+- `uv run python -m py_compile scripts/*.py` passed.
+- `uv run python scripts/inspect_zaya_port.py --local-files-only` passed: 2483 HF indexed tensors, 2483 MLX parameters, 0 missing, 0 extra. Does not load full tensors.
+- Commit: `5445b04 Add safe ZAYA port inspection`.
 
 ## Notes
 - User explicitly said not to run the model because it crashes/times out.
+- Located upstream implementation at `.venv/lib/python3.13/site-packages/transformers/models/zaya/modeling_zaya.py`.
