@@ -1,0 +1,17 @@
+[project]
+name = "zaya1-8b-mac"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.11.0",
+    "huggingface-hub>=0.34.0,<1.0",
+    "mlx>=0.31.2",
+    "mlx-lm>=0.29.1",
+    "safetensors>=0.6.0",
+    "sentencepiece>=0.2.0",
+    "torch>=2.9.0",
+    "transformers @ git+https://github.com/Zyphra/transformers.git@zaya1",
+]
+
+[tool.uv]
+package = false
