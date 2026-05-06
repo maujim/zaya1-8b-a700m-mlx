@@ -289,13 +289,17 @@ class Experts(nn.Module):
         self.local_experts = [MLP(args) for _ in range(args.num_experts)]
 
     def __call__(self, hidden_states: mx.array, choices: mx.array, use_mod: bool):
-        outputs = []
+        # The PyTorch reference sorts tokens by selected expert and evaluates each
+        # expert only on its routed tokens. MLX has less ergonomic dynamic indexed
+        # batching, so this port still evaluates each expert on the whole batch,
+        # but it avoids the previous `[B, S, E, H]` stack that could spike memory.
+        output = mx.zeros_like(hidden_states)
         for i, expert in enumerate(self.local_experts):
-            outputs.append(expert(hidden_states))
+            expert_output = expert(hidden_states)
+            output = output + mx.where(choices[..., None] == i, expert_output, mx.zeros_like(expert_output))
         if use_mod:
-            outputs.append(hidden_states)
-        stacked = mx.stack(outputs, axis=-2)
-        return mx.take_along_axis(stacked, choices[..., None, None], axis=-2)[..., 0, :]
+            output = mx.where(choices[..., None] == len(self.local_experts), hidden_states, output)
+        return output
 
 
 class ZayaBlock(nn.Module):
