@@ -444,14 +444,18 @@ def main() -> None:
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--model-path", type=Path, help="Use an existing Hugging Face snapshot directory.")
+    parser.add_argument("--show-token-ids", action="store_true", help="Print generated token IDs for smoke tests.")
     args = parser.parse_args()
 
-    model_path = Path(snapshot_download(MODEL_ID, local_files_only=args.local_files_only))
+    model_path = args.model_path or Path(snapshot_download(MODEL_ID, local_files_only=args.local_files_only))
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     model = load_model(model_path)
 
     pieces = []
     for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature):
+        if args.show_token_ids:
+            print(f"[token_id={token}]", flush=True)
         text = tokenizer.decode([token], skip_special_tokens=True)
         pieces.append(text)
         print(text, end="", flush=True)
