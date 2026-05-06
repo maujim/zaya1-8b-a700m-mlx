@@ -34,10 +34,16 @@ The chat loads the experimental MLX port, then accepts messages at the `you>` pr
 Ctrl-D to exit. To force a one-token startup generation check, add `--validate-startup`; this can be slow or unstable on
 memory-constrained Macs.
 
-Inspect the local MLX module/key mapping without loading the 8B weights:
+Inspect the local MLX module/key/shape mapping without loading the 8B weights:
 
 ```bash
 uv run python scripts/inspect_zaya_port.py --local-files-only
+```
+
+Run a tiny synthetic MLX model through the same code paths without loading ZAYA weights:
+
+```bash
+uv run python scripts/smoke_tiny_zaya_mlx.py
 ```
 
 MLX runner:
@@ -65,4 +71,4 @@ uv run python scripts/run_zaya.py \
 
 The model card's official serving path is Zyphra's custom `vllm` fork plus Zyphra's `transformers` fork. Native vLLM serving is not a practical path on an M2 Air because vLLM is designed around CUDA/Linux GPUs. This project uses the Zyphra `transformers` fork directly, which is the path most likely to work locally on macOS CPU/MPS.
 
-`mlx-lm` does not currently ship a `zaya` architecture backend, so `scripts/run_zaya_mlx.py` contains a local MLX implementation for this checkpoint.
+`mlx-lm` does not currently ship a `zaya` architecture backend, so `scripts/run_zaya_mlx.py` contains a local MLX implementation for this checkpoint. The port now matches the checkpoint's tensor names and shapes, but it is still experimental: it does not implement the upstream KV/CCA generation cache and its MoE path still evaluates each expert over the whole batch before masking routed outputs, so long prompts/generation can be slow on an M2 Air.
