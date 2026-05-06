@@ -14,19 +14,22 @@ Review the current hand-written MLX ZAYA1-8B port for correctness and safety wit
 - [x] Locate installed Zyphra Transformers ZAYA implementation for comparison.
 - [x] Compare config/model assumptions against upstream implementation.
 - [x] Identify no-full-load verification strategy.
-- [ ] Fix import/path robustness for chat script if needed.
+- [x] Fix import/path robustness for chat script if needed.
 - [x] Make chat startup validation optional/safe.
 - [x] Add lightweight architecture/key/shape inspection tooling.
 - [x] Add tests or compile checks that avoid full model execution.
-- [ ] Update README with safety and validation notes.
+- [x] Update README with safety and validation notes.
 - [ ] Commit each coherent change.
 
 ## Verification
 - `uv run python -m py_compile scripts/*.py` passed.
 - `uv run python scripts/inspect_zaya_port.py --local-files-only` passed: 2483 HF indexed tensors, 2483 MLX parameters, 0 missing, 0 extra. Does not load full tensors.
 - Enhanced inspection now also validates shapes after conv sanitize rules: 0 mismatches.
-- Commits: `5445b04 Add safe ZAYA port inspection`, `d758f2b Validate MLX port tensor shapes safely`, `fbb0ff6 Reduce MLX expert routing memory spike`.
+- Commits: `5445b04 Add safe ZAYA port inspection`, `d758f2b Validate MLX port tensor shapes safely`, `fbb0ff6 Reduce MLX expert routing memory spike`, `bf72c28 Add tiny MLX port smoke test`.
+- `uv run python scripts/smoke_tiny_zaya_mlx.py` passed: tiny synthetic config exercises attention, CCA, MoE routing, LM head, and one-token generation without loading ZAYA weights.
 
 ## Notes
 - User explicitly said not to run the model because it crashes/times out.
 - Located upstream implementation at `.venv/lib/python3.13/site-packages/transformers/models/zaya/modeling_zaya.py`.
+- Chat script path is acceptable for direct script usage; main safety issue was eager startup generation, now gated behind `--validate-startup`.
+- Remaining limitation: no upstream KV/CCA cache in MLX port; full generation will recompute the prompt each token and can be slow.
