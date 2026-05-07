@@ -15,7 +15,7 @@ PROMPT = """Write a tiny Python function named sum_numbers that takes two number
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ask ZAYA1-8B via MLX to write a tiny Python sum function.")
-    parser.add_argument("--max-new-tokens", type=int, default=192)
+    parser.add_argument("--max-new-tokens", type=int, default=500)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--profile-json", type=Path, help="Write the full profile as JSON.")
     parser.add_argument("--profile-layers", action="store_true", help="Slow: time every layer during generation.")

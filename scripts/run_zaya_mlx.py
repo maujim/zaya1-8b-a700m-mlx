@@ -51,16 +51,13 @@ class Profiler:
             self.counts[name] += 1
 
     def memory_info(self) -> dict[str, Any]:
-        metal = getattr(mx, "metal", None)
-        if metal is None:
-            return {}
         info = {}
         for key, attr in {
             "active_memory_mb": "get_active_memory",
             "peak_memory_mb": "get_peak_memory",
             "cache_memory_mb": "get_cache_memory",
         }.items():
-            fn = getattr(metal, attr, None)
+            fn = getattr(mx, attr, None)
             if fn is not None:
                 try:
                     info[key] = fn() / (1024 * 1024)
