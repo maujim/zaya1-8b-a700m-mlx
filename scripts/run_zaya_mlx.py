@@ -800,6 +800,8 @@ def generate_from_messages(
         profiler.events.append({"name": "prompt", "prompt_tokens": int(tokens.shape[1]), "max_new_tokens": max_new_tokens})
     cache = ZayaGenerationCache(model.args) if use_cache else None
     next_input = tokens
+    context_tokens = int(tokens.shape[1])
+    batch_size = int(tokens.shape[0])
     for i in range(max_new_tokens):
         start = time.perf_counter()
         logits = model(next_input, cache=cache)[:, -1, :]
@@ -807,19 +809,24 @@ def generate_from_messages(
             cache.seen_tokens += int(next_input.shape[1])
             cache.has_previous_state = True
             if debug_cache:
-                validate_generation_cache(cache, batch_size=int(tokens.shape[0]))
+                validate_generation_cache(cache, batch_size=batch_size)
         next_token = sample_next_token(logits, temperature)
         mx.eval(next_token)
         elapsed_ms = (time.perf_counter() - start) * 1000
         if profiler:
             event = "prefill_token" if use_cache and i == 0 else "decode_token" if use_cache else "generate_token"
-            profiler.add_event(event, elapsed_ms, token_index=i, context_tokens=int(tokens.shape[1]), cached=use_cache)
+            profiler.add_event(event, elapsed_ms, token_index=i, context_tokens=context_tokens, cached=use_cache)
         token = int(next_token.item())
         if token == tokenizer.eos_token_id:
             break
         yield token
-        tokens = mx.concatenate([tokens, next_token], axis=1)
-        next_input = next_token if use_cache else tokens
+        if use_cache:
+            context_tokens += 1
+            next_input = next_token
+        else:
+            tokens = mx.concatenate([tokens, next_token], axis=1)
+            context_tokens = int(tokens.shape[1])
+            next_input = tokens
 
 
 def generate(
