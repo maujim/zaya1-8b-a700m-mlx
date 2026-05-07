@@ -487,16 +487,31 @@ class ZayaModel(nn.Module):
         if args.scale_residual_merge:
             self.res_scale = ResidualScaling(args, args.num_hidden_layers)
         self.final_norm = RMSNorm(args.hidden_size, args.norm_epsilon)
+        self._mask_cache: dict[tuple[int, str], mx.array] = {}
+        self._rope_cache: dict[int, tuple[mx.array, mx.array]] = {}
+
+    def causal_mask(self, seq_len: int, dtype) -> mx.array:
+        key = (seq_len, str(dtype))
+        if key not in self._mask_cache:
+            self._mask_cache[key] = mx.triu(mx.full((seq_len, seq_len), -mx.inf), k=1).astype(dtype)
+        return self._mask_cache[key]
+
+    def rope(self, seq_len: int) -> tuple[mx.array, mx.array]:
+        # Current uncached generation always uses positions 0..seq_len-1.
+        # Cached decode can extend this helper later to key by absolute positions.
+        if seq_len not in self._rope_cache:
+            self._rope_cache[seq_len] = rotary_embeddings(self.args, mx.arange(seq_len))
+        return self._rope_cache[seq_len]
 
     def __call__(self, input_ids: mx.array, attention_mask: mx.array | None = None, cache: ZayaGenerationCache | None = None):
         h = self.embed_tokens(input_ids)
         seq_len = h.shape[1]
-        mask = mx.triu(mx.full((seq_len, seq_len), -mx.inf), k=1).astype(h.dtype)
+        mask = self.causal_mask(seq_len, h.dtype)
         if attention_mask is not None:
             cca_mask = attention_mask
         else:
             cca_mask = None
-        cos, sin = rotary_embeddings(self.args, mx.arange(seq_len))
+        cos, sin = self.rope(seq_len)
         residual = None
         prev_router_hidden_states = None
         for i, layer in enumerate(self.layers):

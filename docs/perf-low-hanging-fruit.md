@@ -7,8 +7,15 @@ The current bottlenecks are:
 1. During generation we repeatedly run the whole growing context through the model.
 2. Attention layers do not cache K/V.
 3. ZAYA CCA layers do not cache their convolution state or previous hidden state.
-4. MoE MLP layers evaluate every expert and mask afterwards.
-5. We rebuild small helper tensors like RoPE and causal masks every forward.
+4. ~~MoE MLP layers evaluate every expert and mask afterwards.~~ Implemented behind `--moe-decode-fast-path` for CLI and server.
+5. ~~We rebuild small helper tensors like RoPE and causal masks every forward.~~ Implemented with per-model mask/RoPE caches.
+
+## Current status
+
+- Done: Task 1 — MoE single-token decode short-circuit (`--moe-decode-fast-path`).
+- Done: Task 2 — Rotary and causal mask reuse.
+- Done: Task 3 — KV/CCA cache skeleton (`ZayaGenerationCache` and threaded signatures).
+- Next: Task 4 — opt-in prefill/decode cached generation loop using the cache skeleton.
 
 ## Shared repo context
 
@@ -238,6 +245,8 @@ uv run python scripts/run_zaya_mlx.py --quant q8 --profile --max-new-tokens 10 "
 
 # Task 2 — Rotary and causal mask reuse
 
+Status: implemented on `master` with per-`ZayaModel` caches for causal masks and RoPE tensors.
+
 Suggested branch: `perf/reuse-mask-rope`
 
 ## Problem
@@ -276,11 +285,11 @@ Primary target:
 
 ### Add caches
 
-In `ZayaModel.__init__`, add something simple:
+Implemented in `ZayaModel.__init__`:
 
 ```python
-self._mask_cache = {}
-self._rope_cache = {}
+self._mask_cache: dict[tuple[int, str], mx.array] = {}
+self._rope_cache: dict[int, tuple[mx.array, mx.array]] = {}
 ```
 
 Since this is an experiment, do not over-engineer cache eviction yet.
@@ -292,7 +301,7 @@ Mask depends on:
 - `seq_len`
 - dtype used by attention (`h.dtype` today)
 
-Suggested helper:
+Implemented helper:
 
 ```python
 def causal_mask(self, seq_len: int, dtype) -> mx.array:
@@ -313,8 +322,10 @@ RoPE depends on:
 
 The model config is fixed per model instance, so key by `seq_len`.
 
+Implemented helper:
+
 ```python
-def rope(self, seq_len: int):
+def rope(self, seq_len: int) -> tuple[mx.array, mx.array]:
     if seq_len not in self._rope_cache:
         self._rope_cache[seq_len] = rotary_embeddings(self.args, mx.arange(seq_len))
     return self._rope_cache[seq_len]
