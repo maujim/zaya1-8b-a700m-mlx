@@ -8,3 +8,4 @@ __pycache__/
 .env
 worktrees/
 pi-session-*.html
+profiles/
