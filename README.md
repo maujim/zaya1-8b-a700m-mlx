@@ -18,7 +18,7 @@ uv sync
 
 ## Run stuff
 
-Load with the local MLX port, profiled by default:
+Load with the local MLX port, profiled by default. This load smoke test also defaults to q4 for local speed; pass `--quant full` for BF16.
 
 ```bash
 uv run python scripts/load_zaya_mlx.py
@@ -114,4 +114,4 @@ uv run python scripts/server_zaya_mlx.py --quant q8
 
 ## Current perf state
 
-`scripts/run_zaya_mlx.py` is the experimental MLX implementation and CLI. `scripts/run_python_sum_mlx.sh` is a wrapper around it with the Python sum prompt. The repo currently defaults to cached prefill/decode, MoE single-token expert selection, RoPE/mask reuse, and large-linear-only Q8 quantization. Profiling output separates cached prefill from steady-state decode and reports decode p50/p90/p99 plus tokens/sec. This is a dev/test repo, so the fastest paths are default-on and comparison flags remain available.
+`scripts/run_zaya_mlx.py` is the experimental MLX implementation and CLI. The speed-oriented local entrypoints (`scripts/run_python_sum_mlx.sh`, `scripts/benchmark_speed.sh`, `scripts/load_zaya_mlx.py`, and `scripts/server_zaya_mlx.py`) default to q4, cached prefill/decode, MoE single-token expert selection, RoPE/mask reuse, and large-linear-only quantization. In conservative local runs q4 has been the best usability setting so far: much lower memory and prefill latency than q8 with similar or slightly better decode. Profiling output separates cached prefill from steady-state decode and reports decode p50/p90/p99 plus tokens/sec. This is a dev/test repo, so comparison flags remain available.
