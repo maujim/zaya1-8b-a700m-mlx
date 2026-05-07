@@ -27,9 +27,13 @@ def main() -> None:
         model_path = Path(snapshot_download(MODEL_ID))
     print(f"MLX model path: {model_path}", flush=True)
 
+    model = load_model(model_path, profiler)
+    with profiler.span("final_parameter_sync", force_eval=model.parameters()):
+        pass
+    print("MLX model loaded and synchronized", flush=True)
+
     with profiler.span("load_tokenizer"):
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    model = load_model(model_path, profiler)
 
     print("\n=== prompt ===")
     print(PROMPT)
