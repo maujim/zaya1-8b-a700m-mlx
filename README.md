@@ -99,4 +99,4 @@ uv run python scripts/server_zaya_mlx.py --quant q8
 
 ## Current perf state
 
-`scripts/run_zaya_mlx.py` is the experimental MLX implementation and CLI. `scripts/run_python_sum_mlx.sh` is a wrapper around it with the Python sum prompt. The repo currently defaults to cached prefill/decode, MoE single-token expert selection, RoPE/mask reuse, and large-linear-only Q8 quantization. This is a dev/test repo, so the fastest paths are default-on and comparison flags remain available.
+`scripts/run_zaya_mlx.py` is the experimental MLX implementation and CLI. `scripts/run_python_sum_mlx.sh` is a wrapper around it with the Python sum prompt. The repo currently defaults to cached prefill/decode, MoE single-token expert selection, RoPE/mask reuse, and large-linear-only Q8 quantization. Profiling output separates cached prefill from steady-state decode and reports decode p50/p90/p99 plus tokens/sec. This is a dev/test repo, so the fastest paths are default-on and comparison flags remain available.

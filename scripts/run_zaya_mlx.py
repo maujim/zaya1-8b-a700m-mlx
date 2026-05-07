@@ -67,13 +67,63 @@ class Profiler:
                     pass
         return info
 
+    @staticmethod
+    def percentile(values: list[float], pct: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, max(0, round((pct / 100) * (len(ordered) - 1))))
+        return ordered[index]
+
+    def generation_stats(self) -> dict[str, Any]:
+        stats: dict[str, Any] = {}
+        prompt_events = [event for event in self.events if event["name"] == "prompt"]
+        if prompt_events:
+            stats["prompt_tokens"] = prompt_events[-1].get("prompt_tokens")
+            stats["max_new_tokens"] = prompt_events[-1].get("max_new_tokens")
+
+        prefill_ms = [event["ms"] for event in self.events if event["name"] == "prefill_token"]
+        decode_ms = [event["ms"] for event in self.events if event["name"] == "decode_token"]
+        uncached_ms = [event["ms"] for event in self.events if event["name"] == "generate_token"]
+        if prefill_ms:
+            stats["prefill"] = {"count": len(prefill_ms), "total_ms": sum(prefill_ms), "avg_ms": sum(prefill_ms) / len(prefill_ms)}
+        if decode_ms:
+            total = sum(decode_ms)
+            stats["decode"] = {
+                "count": len(decode_ms),
+                "total_ms": total,
+                "avg_ms": total / len(decode_ms),
+                "p50_ms": self.percentile(decode_ms, 50),
+                "p90_ms": self.percentile(decode_ms, 90),
+                "p99_ms": self.percentile(decode_ms, 99),
+                "tokens_per_s": len(decode_ms) / (total / 1000) if total > 0 else None,
+            }
+        if uncached_ms:
+            total = sum(uncached_ms)
+            stats["uncached_generate"] = {
+                "count": len(uncached_ms),
+                "total_ms": total,
+                "avg_ms": total / len(uncached_ms),
+                "p50_ms": self.percentile(uncached_ms, 50),
+                "p90_ms": self.percentile(uncached_ms, 90),
+                "p99_ms": self.percentile(uncached_ms, 99),
+                "tokens_per_s": len(uncached_ms) / (total / 1000) if total > 0 else None,
+            }
+        return stats
+
     def report(self) -> dict[str, Any]:
         total = time.perf_counter() - self._t0
         summary = []
         for name, seconds in sorted(self.counters.items(), key=lambda item: item[1], reverse=True):
             count = self.counts[name]
             summary.append({"name": name, "count": count, "total_ms": seconds * 1000, "avg_ms": seconds * 1000 / count})
-        return {"total_wall_ms": total * 1000, "summary": summary, "events": self.events, "memory": self.memory_info()}
+        return {
+            "total_wall_ms": total * 1000,
+            "summary": summary,
+            "events": self.events,
+            "memory": self.memory_info(),
+            "generation_stats": self.generation_stats(),
+        }
 
     def print_report(self) -> None:
         if not self.enabled:
@@ -82,6 +132,31 @@ class Profiler:
         print("\n\n=== MLX profile ===")
         for row in report["summary"]:
             print(f"{row['name']:<28} {row['count']:>5}x {row['total_ms']:>10.1f} ms avg {row['avg_ms']:>8.1f} ms")
+        gen = report["generation_stats"]
+        if gen.get("prefill"):
+            prefill = gen["prefill"]
+            prompt_tokens = gen.get("prompt_tokens", "?")
+            print(f"prefill: {prefill['total_ms']:.1f} ms, prompt={prompt_tokens} tok")
+        if gen.get("decode"):
+            decode = gen["decode"]
+            print(
+                "decode: "
+                f"avg {decode['avg_ms']:.1f} ms, "
+                f"p50 {decode['p50_ms']:.1f} ms, "
+                f"p90 {decode['p90_ms']:.1f} ms, "
+                f"p99 {decode['p99_ms']:.1f} ms, "
+                f"{decode['tokens_per_s']:.2f} tok/s"
+            )
+        if gen.get("uncached_generate"):
+            uncached = gen["uncached_generate"]
+            print(
+                "uncached generate: "
+                f"avg {uncached['avg_ms']:.1f} ms, "
+                f"p50 {uncached['p50_ms']:.1f} ms, "
+                f"p90 {uncached['p90_ms']:.1f} ms, "
+                f"p99 {uncached['p99_ms']:.1f} ms, "
+                f"{uncached['tokens_per_s']:.2f} tok/s"
+            )
         if report["memory"]:
             mem = ", ".join(f"{k}={v:.1f}" for k, v in report["memory"].items())
             print(f"memory: {mem}")
