@@ -43,11 +43,12 @@ Try in-memory Q8 quantization, no extra model copy on disk. Q8 skips the pre-qua
 ./scripts/run_python_sum_mlx.sh --quant q8 --q8-min-weight-size 0  # slower startup, exhaustive
 ```
 
-Run the OpenAI-compatible MLX server. Fast generation paths are on by default (`--cache` and `--moe-decode-fast-path`); pass `--no-cache` or `--no-moe-decode-fast-path` to compare old behavior. Streaming responses use SSE when the request includes `"stream": true`.
+Run the OpenAI-compatible MLX server. Fast generation paths are on by default (`--cache` and `--moe-decode-fast-path`); pass `--no-cache` or `--no-moe-decode-fast-path` to compare old behavior. Streaming responses use SSE when the request includes `"stream": true`. Generation is serialized with an in-process lock; this fiddle server is intentionally one request at a time.
 
 ```bash
 uv run python scripts/server_zaya_mlx.py --port 8123
 uv run python scripts/server_zaya_mlx.py --quant q8 --port 8123
+curl http://127.0.0.1:8123/healthz
 ```
 
 ## pi integration

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -15,7 +16,15 @@ from huggingface_hub import snapshot_download
 from pydantic import BaseModel, Field
 from transformers import AutoTokenizer
 
-from run_zaya_mlx import MODEL_ID, QUANT_CHOICES, Profiler, enable_moe_decode_fast_path, generate_from_messages, load_model
+from run_zaya_mlx import (
+    MODEL_ID,
+    QUANT_CHOICES,
+    Profiler,
+    enable_moe_decode_fast_path,
+    generate_from_messages,
+    load_model,
+    render_messages,
+)
 
 SERVER_MODEL_ID = "zaya-mlx"
 
@@ -66,6 +75,19 @@ def openai_chunk(completion_id: str, content: str | None, finish_reason: str | N
     return f"data: {json.dumps(payload)}\n\n"
 
 
+def prompt_token_count(tokenizer, messages: list[dict[str, str]]) -> int:
+    text = render_messages(tokenizer, messages)
+    return int(tokenizer(text, return_tensors="np")["input_ids"].shape[1])
+
+
+def usage_payload(prompt_tokens: int, completion_tokens: int) -> dict[str, int]:
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
 def create_app(
     quant: str = "full",
     moe_decode_fast_path: bool = True,
@@ -89,6 +111,17 @@ def create_app(
     with profiler.span("load_tokenizer"):
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     profiler.print_report()
+    generation_lock = threading.Lock()
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, Any]:
+        return {
+            "ok": True,
+            "model": SERVER_MODEL_ID,
+            "quant": quant,
+            "cache": use_cache,
+            "moe_decode_fast_path": moe_decode_fast_path,
+        }
 
     @app.get("/v1/models")
     def models() -> dict[str, Any]:
@@ -115,16 +148,20 @@ def create_app(
         max_tokens = request.max_completion_tokens or request.max_tokens or 500
         temperature = 0.0 if request.temperature is None else request.temperature
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+        prompt_tokens = prompt_token_count(tokenizer, messages)
 
         if request.stream:
             def events():
-                yield openai_chunk(completion_id, "")
-                for token in generate_from_messages(model, tokenizer, messages, max_tokens, temperature, use_cache=use_cache):
-                    text = tokenizer.decode([token], skip_special_tokens=True)
-                    if text:
-                        yield openai_chunk(completion_id, text)
-                yield openai_chunk(completion_id, None, "stop")
-                yield "data: [DONE]\n\n"
+                completion_tokens = 0
+                with generation_lock:
+                    yield openai_chunk(completion_id, "")
+                    for token in generate_from_messages(model, tokenizer, messages, max_tokens, temperature, use_cache=use_cache):
+                        completion_tokens += 1
+                        text = tokenizer.decode([token], skip_special_tokens=True)
+                        if text:
+                            yield openai_chunk(completion_id, text)
+                    yield openai_chunk(completion_id, None, "stop")
+                    yield "data: [DONE]\n\n"
 
             return StreamingResponse(
                 events(),
@@ -133,8 +170,11 @@ def create_app(
             )
 
         pieces = []
-        for token in generate_from_messages(model, tokenizer, messages, max_tokens, temperature, use_cache=use_cache):
-            pieces.append(tokenizer.decode([token], skip_special_tokens=True))
+        completion_tokens = 0
+        with generation_lock:
+            for token in generate_from_messages(model, tokenizer, messages, max_tokens, temperature, use_cache=use_cache):
+                completion_tokens += 1
+                pieces.append(tokenizer.decode([token], skip_special_tokens=True))
         content = "".join(pieces)
         return JSONResponse(
             {
@@ -149,7 +189,7 @@ def create_app(
                         "finish_reason": "stop",
                     }
                 ],
-                "usage": {"prompt_tokens": 0, "completion_tokens": len(pieces), "total_tokens": len(pieces)},
+                "usage": usage_payload(prompt_tokens, completion_tokens),
             }
         )
 
