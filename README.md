@@ -86,6 +86,16 @@ mode | baseline | prompt_tokens | generated_ids | first_mismatch | expected_id |
 
 The script exits nonzero on any mismatch.
 
+## Speed benchmarking
+
+Use the conservative benchmark wrapper for before/after speed loops. It writes profile JSON with prefill/decode stats and defaults to 32 generated tokens so it is less aggressive on 24GB machines than the full Python-sum wrapper.
+
+```bash
+scripts/benchmark_speed.sh
+scripts/benchmark_speed.sh --quant q8
+uv run python scripts/summarize_profile.py profiles/speed-YYYYmmdd-HHMMSS.json
+```
+
 ## Useful profiling and comparison knobs
 
 ```bash
