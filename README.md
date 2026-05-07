@@ -112,6 +112,23 @@ uv run python scripts/load_zaya_mlx.py --quant q8 --profile-json q8-load-profile
 uv run python scripts/server_zaya_mlx.py --quant q8
 ```
 
+## Fastest local settings so far
+
+For usable local inference on a 24GB Apple Silicon machine, start here:
+
+```bash
+./scripts/run_python_sum_mlx.sh
+uv run python scripts/server_zaya_mlx.py --port 8123
+```
+
+Those speed-oriented entrypoints default to:
+
+```text
+--quant q4 --cache --moe-decode-fast-path --q8-min-weight-size 1000000
+```
+
+Use `--quant full`, `--quant q8`, `--no-cache`, or `--no-moe-decode-fast-path` only for comparisons. In conservative local runs, q4 is the best usability setting so far: much lower memory and prefill latency than q8 with similar or slightly better decode. A 64-token-cap Python sum run stopped after 24 generated tokens and measured about 105 ms/decode token (9.5 tok/s), 3.8s prefill, ~5.6GB active memory, and ~21.3GB peak memory.
+
 ## Current perf state
 
-`scripts/run_zaya_mlx.py` is the experimental MLX implementation and CLI. The speed-oriented local entrypoints (`scripts/run_python_sum_mlx.sh`, `scripts/benchmark_speed.sh`, `scripts/load_zaya_mlx.py`, and `scripts/server_zaya_mlx.py`) default to q4, cached prefill/decode, MoE single-token expert selection, RoPE/mask reuse, and large-linear-only quantization. In conservative local runs q4 has been the best usability setting so far: much lower memory and prefill latency than q8 with similar or slightly better decode. Profiling output separates cached prefill from steady-state decode and reports decode p50/p90/p99 plus tokens/sec. This is a dev/test repo, so comparison flags remain available.
+`scripts/run_zaya_mlx.py` is the experimental MLX implementation and CLI. The speed-oriented local entrypoints (`scripts/run_python_sum_mlx.sh`, `scripts/benchmark_speed.sh`, `scripts/load_zaya_mlx.py`, and `scripts/server_zaya_mlx.py`) default to q4, cached prefill/decode, MoE single-token expert selection, RoPE/mask reuse, and large-linear-only quantization. Profiling output separates cached prefill from steady-state decode and reports decode p50/p90/p99 plus tokens/sec. This is a dev/test repo, so comparison flags remain available.
