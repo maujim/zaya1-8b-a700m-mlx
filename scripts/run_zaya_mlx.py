@@ -18,7 +18,7 @@ from transformers import AutoTokenizer
 
 
 MODEL_ID = "Zyphra/ZAYA1-8B"
-QUANT_CHOICES = ("full", "q8")
+QUANT_CHOICES = ("full", "q8", "q6", "q4")
 
 
 class Profiler:
@@ -701,17 +701,18 @@ def load_model(
         weights = model.sanitize(weights)
     with (profiler.span("load_weights") if profiler else nullcontext()):
         model.load_weights(list(weights.items()), strict=True)
-    if quant != "q8":
+    if quant == "full":
         with (profiler.span("eval_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
             pass
-    if quant == "q8":
-        q8_stats = {"selected": 0, "skipped_small": 0, "skipped_other": 0, "selected_params": 0}
+    else:
+        bits = int(quant[1:])
+        quant_stats = {"selected": 0, "skipped_small": 0, "skipped_other": 0, "selected_params": 0}
 
-        def q8_predicate(_path, module):
+        def linear_quant_predicate(_path, module):
             if not isinstance(module, nn.Linear) or module.weight.shape[-1] % 64 != 0:
-                q8_stats["skipped_other"] += 1
+                quant_stats["skipped_other"] += 1
                 return False
-            # Q8 startup was dominated by quantizing many tiny/router-ish linears
+            # Quantization startup was dominated by many tiny/router-ish linears
             # that do not move end-to-end latency. Quantize only large matmuls by
             # default (expert MLPs and attention projections), while keeping a CLI
             # knob for experiments. This remains in-memory only.
@@ -719,21 +720,21 @@ def load_model(
             for dim in module.weight.shape:
                 weight_size *= int(dim)
             if weight_size < q8_min_weight_size:
-                q8_stats["skipped_small"] += 1
+                quant_stats["skipped_small"] += 1
                 return False
-            q8_stats["selected"] += 1
-            q8_stats["selected_params"] += weight_size
+            quant_stats["selected"] += 1
+            quant_stats["selected_params"] += weight_size
             return True
 
-        with (profiler.span("quantize_q8", q8_min_weight_size=q8_min_weight_size) if profiler else nullcontext()):
+        with (profiler.span(f"quantize_{quant}", min_weight_size=q8_min_weight_size) if profiler else nullcontext()):
             nn.quantize(
                 model,
-                bits=8,
+                bits=bits,
                 group_size=64,
-                class_predicate=q8_predicate,
+                class_predicate=linear_quant_predicate,
             )
         if profiler:
-            profiler.events.append({"name": "quantize_q8_stats", **q8_stats, "q8_min_weight_size": q8_min_weight_size})
+            profiler.events.append({"name": f"quantize_{quant}_stats", **quant_stats, "min_weight_size": q8_min_weight_size})
         with (profiler.span("eval_quantized_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
             pass
     return model
@@ -850,12 +851,12 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--model-path", type=Path, help="Use an existing Hugging Face snapshot directory.")
     parser.add_argument("--show-token-ids", action="store_true", help="Print generated token IDs for smoke tests.")
-    parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or quick dynamic Q8 quantization after load.")
+    parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or dynamic in-memory q8/q6/q4 quantization after load.")
     parser.add_argument(
         "--q8-min-weight-size",
         type=int,
         default=1_000_000,
-        help="Only quantize Linear weights with at least this many parameters (default: 1,000,000). Use 0 for exhaustive old behavior.",
+        help="Only quantize Linear weights with at least this many parameters for q8/q6/q4 (default: 1,000,000). Use 0 for exhaustive behavior.",
     )
     parser.add_argument("--profile", action="store_true", help="Print timing and MLX memory profile after the run.")
     parser.add_argument("--profile-layers", action="store_true", help="Also synchronize and time each transformer layer. Slower, but shows where generation time goes.")

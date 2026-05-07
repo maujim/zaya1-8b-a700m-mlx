@@ -11,7 +11,7 @@ This wrapper enables profiling and forwards OPTIONS to scripts/run_zaya_mlx.py.
 Common options:
   --max-new-tokens N       Override generated token count (default: MAX_NEW_TOKENS or 500)
   --temperature FLOAT      Override sampling temperature (default: TEMPERATURE or 0)
-  --quant {full,q8}        Weight mode
+  --quant {full,q8,q6,q4}  Weight mode
   --q8-min-weight-size N   Only quantize large Linear weights (default: 1000000; 0 = old exhaustive behavior)
   --profile-json PATH      Write profile events and summary as JSON
   --profile-layers         Profile each transformer layer

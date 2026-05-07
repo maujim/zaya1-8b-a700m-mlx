@@ -36,10 +36,12 @@ Ask the MLX model to write a tiny Python sum function, profiled by default:
 ./scripts/run_python_sum_mlx.sh
 ```
 
-Try in-memory Q8 quantization, no extra model copy on disk. Q8 skips the pre-quant full-parameter sync, then quantizes only large Linear weights by default for faster startup; use `--q8-min-weight-size 0` to reproduce exhaustive quantization.
+Try in-memory quantization, no extra model copy on disk. Quantized modes skip the pre-quant full-parameter sync, then quantize only large Linear weights by default for faster startup; use `--q8-min-weight-size 0` to reproduce exhaustive quantization. For speed experiments, try q8 first, then q6/q4 if memory bandwidth looks like the bottleneck.
 
 ```bash
 ./scripts/run_python_sum_mlx.sh --quant q8
+./scripts/run_python_sum_mlx.sh --quant q6
+./scripts/run_python_sum_mlx.sh --quant q4
 ./scripts/run_python_sum_mlx.sh --quant q8 --q8-min-weight-size 0  # slower startup, exhaustive
 ```
 
@@ -93,6 +95,7 @@ Use the conservative benchmark wrapper for before/after speed loops. It writes p
 ```bash
 scripts/benchmark_speed.sh
 scripts/benchmark_speed.sh --quant q8
+scripts/benchmark_speed.sh --quant q4
 uv run python scripts/summarize_profile.py profiles/speed-YYYYmmdd-HHMMSS.json
 ```
 
@@ -104,6 +107,7 @@ uv run python scripts/summarize_profile.py profiles/speed-YYYYmmdd-HHMMSS.json
 ./scripts/run_python_sum_mlx.sh --no-cache
 ./scripts/run_python_sum_mlx.sh --no-moe-decode-fast-path
 ./scripts/run_python_sum_mlx.sh --quant q8 --q8-min-weight-size 0
+./scripts/run_python_sum_mlx.sh --quant q4
 uv run python scripts/load_zaya_mlx.py --quant q8 --profile-json q8-load-profile.json
 uv run python scripts/server_zaya_mlx.py --quant q8
 ```
