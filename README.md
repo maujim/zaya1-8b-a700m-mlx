@@ -33,7 +33,7 @@ uv run python scripts/run_python_sum_mlx.py
 Serve the MLX port through a minimal OpenAI-compatible API:
 
 ```bash
-uv run python scripts/server_zaya_mlx.py
+uv run python scripts/server_zaya_mlx.py --port 8123
 ```
 
 This repo includes a project-local pi extension in `.pi/extensions/zaya-mlx.ts` that registers `zaya-mlx/zaya-mlx` against `http://127.0.0.1:8123/v1`. Start the server, reload pi, then select that model.

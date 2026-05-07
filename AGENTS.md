@@ -12,7 +12,7 @@ Use `uv run ...` for Python commands.
 uv run python scripts/load_zaya_mlx.py
 uv run python scripts/load_zaya_hf.py
 uv run python scripts/run_python_sum_mlx.py
-uv run python scripts/server_zaya_mlx.py
+uv run python scripts/server_zaya_mlx.py --port 8123
 ```
 
 For a detailed generation trace:
