@@ -81,7 +81,23 @@ Acceptance:
 - Decode latency does not grow significantly over 100+ generated tokens.
 - Token parity remains intact.
 
-### 5. Avoid `.item()` sync in MoE fast path if it hurts
+### 5. Speed up and tune Q8 quantization
+
+`--quant q8` is dynamic and in-memory. To reduce startup overhead and avoid quantizing tiny linears that do not move latency, the default path quantizes only Linear weights with at least 1,000,000 parameters. Use:
+
+```bash
+--q8-min-weight-size 0
+```
+
+to reproduce exhaustive old behavior, or increase the threshold to quantize fewer modules.
+
+Acceptance:
+
+- Q8 startup is faster than exhaustive dynamic quantization.
+- Decode latency stays equal or better for the Python sum prompt.
+- No quantized model copy is written to disk.
+
+### 6. Avoid `.item()` sync in MoE fast path if it hurts
 
 The MoE fast path uses `choices.item()` to pick the expert in Python. Measure whether sync overhead is smaller than expert savings.
 
@@ -95,7 +111,7 @@ Acceptance:
 
 - Document avg decode token time with and without MoE fast path.
 
-### 6. Server concurrency and streaming polish
+### 7. Server concurrency and streaming polish
 
 The server currently shares one model instance. Improve production-ish behavior while staying simple:
 
@@ -111,7 +127,7 @@ Acceptance:
 
 ## Quality and cleanup
 
-### 7. Minimal smoke tests
+### 8. Minimal smoke tests
 
 Add lightweight tests that do not require downloading the full model:
 
@@ -124,7 +140,7 @@ Acceptance:
 
 - `uv run pytest` or equivalent runs quickly without model weights.
 
-### 8. Documentation update
+### 9. Documentation update
 
 Update README with the fastest recommended commands:
 

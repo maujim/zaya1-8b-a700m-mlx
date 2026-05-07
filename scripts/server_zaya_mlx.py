@@ -66,7 +66,12 @@ def openai_chunk(completion_id: str, content: str | None, finish_reason: str | N
     return f"data: {json.dumps(payload)}\n\n"
 
 
-def create_app(quant: str = "full", moe_decode_fast_path: bool = True, use_cache: bool = True) -> FastAPI:
+def create_app(
+    quant: str = "full",
+    moe_decode_fast_path: bool = True,
+    use_cache: bool = True,
+    q8_min_weight_size: int = 1_000_000,
+) -> FastAPI:
     app = FastAPI(title="ZAYA MLX OpenAI-compatible server")
 
     profiler = Profiler(enabled=True)
@@ -74,7 +79,7 @@ def create_app(quant: str = "full", moe_decode_fast_path: bool = True, use_cache
         model_path = Path(snapshot_download(MODEL_ID))
     print(f"MLX model path: {model_path}", flush=True)
 
-    model = load_model(model_path, profiler, quant=quant)
+    model = load_model(model_path, profiler, quant=quant, q8_min_weight_size=q8_min_weight_size)
     if moe_decode_fast_path:
         enable_moe_decode_fast_path(model)
     with profiler.span("final_parameter_sync", force_eval=model.parameters()):
@@ -156,6 +161,12 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8123)
     parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or quick dynamic Q8 quantization after load.")
+    parser.add_argument(
+        "--q8-min-weight-size",
+        type=int,
+        default=1_000_000,
+        help="Only quantize Linear weights with at least this many parameters. Use 0 for exhaustive old behavior.",
+    )
     parser.add_argument("--cache", dest="cache", action="store_true", default=True, help="Use KV/CCA cached generation (default).")
     parser.add_argument("--no-cache", dest="cache", action="store_false", help="Disable KV/CCA cached generation.")
     parser.add_argument(
@@ -174,7 +185,12 @@ def main() -> None:
     args = parser.parse_args()
 
     uvicorn.run(
-        create_app(args.quant, moe_decode_fast_path=args.moe_decode_fast_path, use_cache=args.cache),
+        create_app(
+            args.quant,
+            moe_decode_fast_path=args.moe_decode_fast_path,
+            use_cache=args.cache,
+            q8_min_weight_size=args.q8_min_weight_size,
+        ),
         host=args.host,
         port=args.port,
         log_level="info",

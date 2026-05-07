@@ -599,7 +599,12 @@ def enable_moe_decode_fast_path(model: ZayaForCausalLM) -> None:
             layer.zaya_block.experts.moe_decode_fast_path = True
 
 
-def load_model(model_path: Path, profiler: Profiler | None = None, quant: str = "full") -> ZayaForCausalLM:
+def load_model(
+    model_path: Path,
+    profiler: Profiler | None = None,
+    quant: str = "full",
+    q8_min_weight_size: int = 1_000_000,
+) -> ZayaForCausalLM:
     if quant not in QUANT_CHOICES:
         raise ValueError(f"quant must be one of {QUANT_CHOICES}, got {quant!r}")
     with (profiler.span("read_config") if profiler else nullcontext()):
@@ -619,14 +624,37 @@ def load_model(model_path: Path, profiler: Profiler | None = None, quant: str = 
     with (profiler.span("eval_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
         pass
     if quant == "q8":
-        with (profiler.span("quantize_q8") if profiler else nullcontext()):
+        q8_stats = {"selected": 0, "skipped_small": 0, "skipped_other": 0, "selected_params": 0}
+
+        def q8_predicate(_path, module):
+            if not isinstance(module, nn.Linear) or module.weight.shape[-1] % 64 != 0:
+                q8_stats["skipped_other"] += 1
+                return False
+            # Q8 startup was dominated by quantizing many tiny/router-ish linears
+            # that do not move end-to-end latency. Quantize only large matmuls by
+            # default (expert MLPs and attention projections), while keeping a CLI
+            # knob for experiments. This remains in-memory only.
+            weight_size = 1
+            for dim in module.weight.shape:
+                weight_size *= int(dim)
+            if weight_size < q8_min_weight_size:
+                q8_stats["skipped_small"] += 1
+                return False
+            q8_stats["selected"] += 1
+            q8_stats["selected_params"] += weight_size
+            return True
+
+        with (profiler.span("quantize_q8", q8_min_weight_size=q8_min_weight_size) if profiler else nullcontext()):
             nn.quantize(
                 model,
                 bits=8,
                 group_size=64,
-                class_predicate=lambda _path, module: isinstance(module, nn.Linear)
-                and module.weight.shape[-1] % 64 == 0,
+                class_predicate=q8_predicate,
             )
+        if profiler:
+            profiler.events.append({"name": "quantize_q8_stats", **q8_stats, "q8_min_weight_size": q8_min_weight_size})
+            profiler.counters["quantize_q8_selected_params"] += q8_stats["selected_params"] / 1_000_000
+            profiler.counts["quantize_q8_selected_params"] += 1
         with (profiler.span("eval_quantized_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
             pass
     return model
@@ -695,6 +723,12 @@ def main() -> None:
     parser.add_argument("--model-path", type=Path, help="Use an existing Hugging Face snapshot directory.")
     parser.add_argument("--show-token-ids", action="store_true", help="Print generated token IDs for smoke tests.")
     parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or quick dynamic Q8 quantization after load.")
+    parser.add_argument(
+        "--q8-min-weight-size",
+        type=int,
+        default=1_000_000,
+        help="Only quantize Linear weights with at least this many parameters (default: 1,000,000). Use 0 for exhaustive old behavior.",
+    )
     parser.add_argument("--profile", action="store_true", help="Print timing and MLX memory profile after the run.")
     parser.add_argument("--profile-layers", action="store_true", help="Also synchronize and time each transformer layer. Slower, but shows where generation time goes.")
     parser.add_argument("--profile-json", type=Path, help="Write full profiling events and summary as JSON.")
@@ -721,7 +755,7 @@ def main() -> None:
         model_path = args.model_path or Path(snapshot_download(MODEL_ID))
     with profiler.span("load_tokenizer"):
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    model = load_model(model_path, profiler, quant=args.quant)
+    model = load_model(model_path, profiler, quant=args.quant, q8_min_weight_size=args.q8_min_weight_size)
 
     if args.moe_decode_fast_path:
         enable_moe_decode_fast_path(model)

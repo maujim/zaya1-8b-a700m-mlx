@@ -36,16 +36,18 @@ Ask the MLX model to write a tiny Python sum function, profiled by default:
 ./scripts/run_python_sum_mlx.sh
 ```
 
-Try in-memory Q8 quantization, no extra model copy on disk:
+Try in-memory Q8 quantization, no extra model copy on disk. By default Q8 only quantizes large Linear weights for faster startup; use `--q8-min-weight-size 0` to reproduce exhaustive quantization.
 
 ```bash
 ./scripts/run_python_sum_mlx.sh --quant q8
+./scripts/run_python_sum_mlx.sh --quant q8 --q8-min-weight-size 0  # slower startup, exhaustive
 ```
 
-Run the OpenAI-compatible MLX server:
+Run the OpenAI-compatible MLX server. Fast generation paths are on by default (`--cache` and `--moe-decode-fast-path`); pass `--no-cache` or `--no-moe-decode-fast-path` to compare old behavior. Streaming responses use SSE when the request includes `"stream": true`.
 
 ```bash
 uv run python scripts/server_zaya_mlx.py --port 8123
+uv run python scripts/server_zaya_mlx.py --quant q8 --port 8123
 ```
 
 ## pi integration
@@ -62,14 +64,18 @@ Start the server, run `/reload` in pi, then select:
 zaya-mlx/zaya-mlx
 ```
 
-## Useful profiling knobs
+## Useful profiling and comparison knobs
 
 ```bash
 ./scripts/run_python_sum_mlx.sh --profile-json profile.json
 ./scripts/run_python_sum_mlx.sh --profile-layers
+./scripts/run_python_sum_mlx.sh --no-cache
+./scripts/run_python_sum_mlx.sh --no-moe-decode-fast-path
+./scripts/run_python_sum_mlx.sh --quant q8 --q8-min-weight-size 0
+uv run python scripts/load_zaya_mlx.py --quant q8 --profile-json q8-load-profile.json
 uv run python scripts/server_zaya_mlx.py --quant q8
 ```
 
-## What is still bad
+## Current perf state
 
-`scripts/run_zaya_mlx.py` is the experimental MLX implementation and CLI. `scripts/run_python_sum_mlx.sh` is just a tiny wrapper around it with the Python sum prompt. It is slow because generation has no KV/CCA cache yet, and the MoE path still evaluates every expert over the whole batch before masking routed outputs.
+`scripts/run_zaya_mlx.py` is the experimental MLX implementation and CLI. `scripts/run_python_sum_mlx.sh` is a wrapper around it with the Python sum prompt. The repo currently defaults to cached prefill/decode, MoE single-token expert selection, RoPE/mask reuse, and large-linear-only Q8 quantization. This is a dev/test repo, so the fastest paths are default-on and comparison flags remain available.
