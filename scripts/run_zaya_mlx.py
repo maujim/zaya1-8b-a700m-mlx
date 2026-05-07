@@ -274,7 +274,19 @@ class CCA(nn.Module):
             hidden_states = hidden_states * cca_mask[:, :, None]
 
         hs = hidden_states.transpose(1, 0, 2)
-        hs_d = mx.pad(hs[:-1], [(1, 0), (0, 0), (0, 0)])
+        use_decode_cache = (
+            cache is not None
+            and cache.has_previous_state
+            and hidden_states.shape[1] == 1
+            and cache.conv_states[self.layer_n] is not None
+            and cache.prev_hs[self.layer_n] is not None
+        )
+        if use_decode_cache:
+            # Cached decode uses the previous token's hidden state for val_proj2's
+            # one-token delay, then updates the cache after computing the value.
+            hs_d = cache.prev_hs[self.layer_n][None, :, :]
+        else:
+            hs_d = mx.pad(hs[:-1], [(1, 0), (0, 0), (0, 0)])
         q = self.linear_q(hs)
         k = self.linear_k(hs)
         qk0 = mx.concatenate([q, k], axis=-1)
@@ -287,11 +299,28 @@ class CCA(nn.Module):
         qk_mean_q = (query_pre + key_pre) / 2
         qk_mean_k = qk_mean_q.reshape(*qk_mean_q.shape[:2], self.num_kv_heads, self.gqa_groups, -1).mean(axis=-2)
 
-        qk_conv = qk0.transpose(1, 0, 2)
-        qk_conv = mx.pad(qk_conv, [(0, 0), (self.total_padding, 0), (0, 0)])
+        qk_input = qk0.transpose(1, 0, 2)
+        if use_decode_cache:
+            # MLX Conv1d uses [B, T, C]. Keep the previous `total_padding`
+            # raw q/k timesteps, append the new token, and run the causal conv
+            # over only this short window. For common ZAYA settings this produces
+            # exactly one output timestep.
+            qk_conv = mx.concatenate([cache.conv_states[self.layer_n], qk_input], axis=1)
+        else:
+            qk_conv = mx.pad(qk_input, [(0, 0), (self.total_padding, 0), (0, 0)])
         qk_conv = self.conv_qk[0](qk_conv)
         qk_conv = self.conv_qk[1](qk_conv)
         qk3 = qk_conv.transpose(1, 0, 2)
+
+        if cache is not None:
+            if self.total_padding > 0:
+                state_source = qk_input
+                if state_source.shape[1] < self.total_padding:
+                    state_source = mx.pad(state_source, [(0, 0), (self.total_padding - state_source.shape[1], 0), (0, 0)])
+                if use_decode_cache:
+                    state_source = mx.concatenate([cache.conv_states[self.layer_n], qk_input], axis=1)
+                cache.conv_states[self.layer_n] = state_source[:, -self.total_padding :, :]
+            cache.prev_hs[self.layer_n] = hs[-1]
 
         query = qk3[..., : self.latent_q_dim].reshape(*qk3.shape[:2], self.num_q_heads, self.head_dim) + qk_mean_q
         key = qk3[..., self.latent_q_dim :].reshape(*qk3.shape[:2], self.num_kv_heads, self.head_dim) + qk_mean_k
@@ -328,6 +357,13 @@ class Attention(nn.Module):
         if repeats > 1:
             k = mx.repeat(k, repeats, axis=1)
             v = mx.repeat(v, repeats, axis=1)
+        if cache is not None:
+            if cache.has_previous_state and cache.key_states[self.layer_n] is not None:
+                k = mx.concatenate([cache.key_states[self.layer_n], k], axis=2)
+                v = mx.concatenate([cache.value_states[self.layer_n], v], axis=2)
+                mask = None
+            cache.key_states[self.layer_n] = k
+            cache.value_states[self.layer_n] = v
         out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.head_dim**-0.5, mask=mask)
         out = out.transpose(0, 2, 1, 3).reshape(bsz, seq_len, self.args.hidden_size // 2)
         return self.o_proj(out)
@@ -497,21 +533,26 @@ class ZayaModel(nn.Module):
         return self._mask_cache[key]
 
     def rope(self, seq_len: int) -> tuple[mx.array, mx.array]:
-        # Current uncached generation always uses positions 0..seq_len-1.
-        # Cached decode can extend this helper later to key by absolute positions.
         if seq_len not in self._rope_cache:
             self._rope_cache[seq_len] = rotary_embeddings(self.args, mx.arange(seq_len))
         return self._rope_cache[seq_len]
 
+    def rope_for_positions(self, positions: mx.array) -> tuple[mx.array, mx.array]:
+        return rotary_embeddings(self.args, positions)
+
     def __call__(self, input_ids: mx.array, attention_mask: mx.array | None = None, cache: ZayaGenerationCache | None = None):
         h = self.embed_tokens(input_ids)
         seq_len = h.shape[1]
-        mask = self.causal_mask(seq_len, h.dtype)
+        cached_decode = cache is not None and cache.has_previous_state
+        mask = None if cached_decode else self.causal_mask(seq_len, h.dtype)
         if attention_mask is not None:
             cca_mask = attention_mask
         else:
             cca_mask = None
-        cos, sin = self.rope(seq_len)
+        if cached_decode:
+            cos, sin = self.rope_for_positions(mx.array([cache.seen_tokens]))
+        else:
+            cos, sin = self.rope(seq_len)
         residual = None
         prev_router_hidden_states = None
         for i, layer in enumerate(self.layers):
@@ -597,6 +638,12 @@ def render_messages(tokenizer, messages: list[dict[str, str]]) -> str:
     return "\n".join(f"{message['role']}: {message['content']}" for message in messages) + "\nassistant:"
 
 
+def sample_next_token(logits: mx.array, temperature: float) -> mx.array:
+    if temperature > 0:
+        return mx.random.categorical(logits / temperature, num_samples=1)
+    return mx.argmax(logits, axis=-1, keepdims=True)
+
+
 def generate_from_messages(
     model,
     tokenizer,
@@ -604,6 +651,7 @@ def generate_from_messages(
     max_new_tokens: int,
     temperature: float,
     profiler: Profiler | None = None,
+    use_cache: bool = False,
 ):
     with (profiler.span("render_prompt") if profiler else nullcontext()):
         text = render_messages(tokenizer, messages)
@@ -612,27 +660,31 @@ def generate_from_messages(
     tokens = mx.array(token_ids)
     if profiler:
         profiler.events.append({"name": "prompt", "prompt_tokens": int(tokens.shape[1]), "max_new_tokens": max_new_tokens})
+    cache = ZayaGenerationCache(model.args) if use_cache else None
+    next_input = tokens
     for i in range(max_new_tokens):
         start = time.perf_counter()
-        logits = model(tokens)[:, -1, :]
-        if temperature > 0:
-            next_token = mx.random.categorical(logits / temperature, num_samples=1)
-        else:
-            next_token = mx.argmax(logits, axis=-1, keepdims=True)
+        logits = model(next_input, cache=cache)[:, -1, :]
+        if cache is not None:
+            cache.seen_tokens += int(next_input.shape[1])
+            cache.has_previous_state = True
+        next_token = sample_next_token(logits, temperature)
         mx.eval(next_token)
         elapsed_ms = (time.perf_counter() - start) * 1000
         if profiler:
-            profiler.add_event("generate_token", elapsed_ms, token_index=i, context_tokens=int(tokens.shape[1]))
+            event = "prefill_token" if use_cache and i == 0 else "decode_token" if use_cache else "generate_token"
+            profiler.add_event(event, elapsed_ms, token_index=i, context_tokens=int(tokens.shape[1]), cached=use_cache)
         token = int(next_token.item())
         if token == tokenizer.eos_token_id:
             break
         yield token
         tokens = mx.concatenate([tokens, next_token], axis=1)
+        next_input = next_token if use_cache else tokens
 
 
-def generate(model, tokenizer, prompt: str, max_new_tokens: int, temperature: float, profiler: Profiler | None = None):
+def generate(model, tokenizer, prompt: str, max_new_tokens: int, temperature: float, profiler: Profiler | None = None, use_cache: bool = False):
     messages = [{"role": "user", "content": prompt}]
-    yield from generate_from_messages(model, tokenizer, messages, max_new_tokens, temperature, profiler)
+    yield from generate_from_messages(model, tokenizer, messages, max_new_tokens, temperature, profiler, use_cache=use_cache)
 
 
 def main() -> None:
@@ -646,6 +698,7 @@ def main() -> None:
     parser.add_argument("--profile", action="store_true", help="Print timing and MLX memory profile after the run.")
     parser.add_argument("--profile-layers", action="store_true", help="Also synchronize and time each transformer layer. Slower, but shows where generation time goes.")
     parser.add_argument("--profile-json", type=Path, help="Write full profiling events and summary as JSON.")
+    parser.add_argument("--cache", action="store_true", help="Experimental: prefill once, then decode one token at a time with KV/CCA cache.")
     parser.add_argument(
         "--moe-decode-fast-path",
         action="store_true",
@@ -667,7 +720,7 @@ def main() -> None:
         enable_moe_decode_fast_path(model)
 
     pieces = []
-    for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature, profiler):
+    for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature, profiler, use_cache=args.cache):
         if args.show_token_ids:
             print(f"[token_id={token}]", flush=True)
         text = tokenizer.decode([token], skip_special_tokens=True)

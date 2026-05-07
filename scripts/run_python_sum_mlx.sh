@@ -14,6 +14,7 @@ Common options:
   --quant {full,q8}        Weight mode
   --profile-json PATH      Write profile events and summary as JSON
   --profile-layers         Profile each transformer layer
+  --cache                  Enable experimental KV/CCA cached generation
   --moe-decode-fast-path   Enable single-token MoE fast path
   -h, --help               Show this help and the forwarded runner help
 

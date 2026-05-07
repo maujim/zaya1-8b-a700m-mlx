@@ -4,9 +4,9 @@ These are handoff specs for separate agents/branches. The goal is to improve gen
 
 The current bottlenecks are:
 
-1. During generation we repeatedly run the whole growing context through the model.
-2. Attention layers do not cache K/V.
-3. ZAYA CCA layers do not cache their convolution state or previous hidden state.
+1. ~~During generation we repeatedly run the whole growing context through the model.~~ Experimental `--cache` mode pre-fills once and decodes one token at a time.
+2. ~~Attention layers do not cache K/V.~~ Experimental `--cache` mode stores repeated post-RoPE K/V per attention layer.
+3. ~~ZAYA CCA layers do not cache their convolution state or previous hidden state.~~ Experimental `--cache` mode stores CCA conv windows and delayed hidden state.
 4. ~~MoE MLP layers evaluate every expert and mask afterwards.~~ Implemented behind `--moe-decode-fast-path` for CLI and server.
 5. ~~We rebuild small helper tensors like RoPE and causal masks every forward.~~ Implemented with per-model mask/RoPE caches.
 
@@ -15,7 +15,8 @@ The current bottlenecks are:
 - Done: Task 1 — MoE single-token decode short-circuit (`--moe-decode-fast-path`).
 - Done: Task 2 — Rotary and causal mask reuse.
 - Done: Task 3 — KV/CCA cache skeleton (`ZayaGenerationCache` and threaded signatures).
-- Next: Task 4 — opt-in prefill/decode cached generation loop using the cache skeleton.
+- Done: Task 4 — opt-in prefill/decode cached generation loop using the cache skeleton (`--cache` for CLI and server).
+- Next: validate token parity/performance more broadly, then decide whether any flags should become defaults.
 
 ## Shared repo context
 
@@ -547,6 +548,8 @@ If full model is too expensive, synthetic is enough for skeleton.
 ---
 
 # Task 4 — Prefill once, decode one token at a time using cache
+
+Status: implemented experimentally on `master` behind `--cache` for CLI and server.
 
 Suggested branch: `perf/prefill-decode-loop`
 

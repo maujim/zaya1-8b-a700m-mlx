@@ -66,7 +66,7 @@ def openai_chunk(completion_id: str, content: str | None, finish_reason: str | N
     return f"data: {json.dumps(payload)}\n\n"
 
 
-def create_app(quant: str = "full", moe_decode_fast_path: bool = False) -> FastAPI:
+def create_app(quant: str = "full", moe_decode_fast_path: bool = False, use_cache: bool = False) -> FastAPI:
     app = FastAPI(title="ZAYA MLX OpenAI-compatible server")
 
     profiler = Profiler(enabled=True)
@@ -114,17 +114,21 @@ def create_app(quant: str = "full", moe_decode_fast_path: bool = False) -> FastA
         if request.stream:
             def events():
                 yield openai_chunk(completion_id, "")
-                for token in generate_from_messages(model, tokenizer, messages, max_tokens, temperature):
+                for token in generate_from_messages(model, tokenizer, messages, max_tokens, temperature, use_cache=use_cache):
                     text = tokenizer.decode([token], skip_special_tokens=True)
                     if text:
                         yield openai_chunk(completion_id, text)
                 yield openai_chunk(completion_id, None, "stop")
                 yield "data: [DONE]\n\n"
 
-            return StreamingResponse(events(), media_type="text/event-stream")
+            return StreamingResponse(
+                events(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
 
         pieces = []
-        for token in generate_from_messages(model, tokenizer, messages, max_tokens, temperature):
+        for token in generate_from_messages(model, tokenizer, messages, max_tokens, temperature, use_cache=use_cache):
             pieces.append(tokenizer.decode([token], skip_special_tokens=True))
         content = "".join(pieces)
         return JSONResponse(
@@ -152,6 +156,7 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8123)
     parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or quick dynamic Q8 quantization after load.")
+    parser.add_argument("--cache", action="store_true", help="Experimental: use KV/CCA cache for generation.")
     parser.add_argument(
         "--moe-decode-fast-path",
         action="store_true",
@@ -159,7 +164,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    uvicorn.run(create_app(args.quant, moe_decode_fast_path=args.moe_decode_fast_path), host=args.host, port=args.port, log_level="info")
+    uvicorn.run(
+        create_app(args.quant, moe_decode_fast_path=args.moe_decode_fast_path, use_cache=args.cache),
+        host=args.host,
+        port=args.port,
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":
