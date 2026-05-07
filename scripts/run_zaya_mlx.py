@@ -359,8 +359,24 @@ class Experts(nn.Module):
     def __init__(self, args: ZayaArgs):
         super().__init__()
         self.local_experts = [MLP(args) for _ in range(args.num_experts)]
+        self.moe_decode_fast_path = False
 
     def __call__(self, hidden_states: mx.array, choices: mx.array, use_mod: bool):
+        # Fast path for single-token decode (B=1, S=1): evaluate only the chosen expert.
+        # This avoids running every expert on the full batch and masking afterwards.
+        # Note: choices.item() forces a CPU synchronization, which may add overhead.
+        if self.moe_decode_fast_path and hidden_states.shape[0] == 1 and hidden_states.shape[1] == 1:
+            selected = int(choices.item())
+            if use_mod and selected == len(self.local_experts):
+                return hidden_states
+            if 0 <= selected < len(self.local_experts):
+                return self.local_experts[selected](hidden_states)
+            raise ValueError(
+                f"Invalid expert choice {selected} for {len(self.local_experts)} experts "
+                f"(use_mod={use_mod})"
+            )
+
+        # Original full-expert path for general shapes (prefill, batch decode, etc.).
         # The PyTorch reference sorts tokens by selected expert and evaluates each
         # expert only on its routed tokens. MLX has less ergonomic dynamic indexed
         # batching, so this port still evaluates each expert on the whole batch,
@@ -574,6 +590,13 @@ def main() -> None:
     parser.add_argument("--profile", action="store_true", help="Print timing and MLX memory profile after the run.")
     parser.add_argument("--profile-layers", action="store_true", help="Also synchronize and time each transformer layer. Slower, but shows where generation time goes.")
     parser.add_argument("--profile-json", type=Path, help="Write full profiling events and summary as JSON.")
+    parser.add_argument(
+        "--moe-decode-fast-path",
+        action="store_true",
+        help="Experimental: evaluate only the chosen MoE expert during single-token decode. "
+        "Skips the default full-expert evaluation when hidden_states shape is (1, 1, H). "
+        "May increase or decrease latency depending on choices.item() sync overhead.",
+    )
     args = parser.parse_args()
 
     profiler = Profiler(enabled=args.profile or args.profile_json is not None or args.profile_layers, profile_layers=args.profile_layers)
@@ -583,6 +606,11 @@ def main() -> None:
     with profiler.span("load_tokenizer"):
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     model = load_model(model_path, profiler, quant=args.quant)
+
+    if args.moe_decode_fast_path:
+        for layer in model.model.layers:
+            if isinstance(layer, MLPLayer):
+                layer.zaya_block.experts.moe_decode_fast_path = True
 
     pieces = []
     for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature, profiler):
