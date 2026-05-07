@@ -56,6 +56,14 @@ uv run python scripts/run_zaya_mlx.py \
   "Say hello."
 ```
 
+Add `--profile` to print load/generation timings and MLX memory stats, or `--profile-layers` for slower per-layer timings. Use `--profile-json profile.json` to save the full event log.
+
+To test only MLX model loading/synchronization with profiling enabled by default:
+
+```bash
+uv run python scripts/profile_load_zaya_mlx.py --local-files-only
+```
+
 The snapshot is resolved from the normal Hugging Face cache, e.g.
 `~/.cache/huggingface/hub/models--Zyphra--ZAYA1-8B/snapshots/...`. You can also pass that directory explicitly with
 `--model-path`.

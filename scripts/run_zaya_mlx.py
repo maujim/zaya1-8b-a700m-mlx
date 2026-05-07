@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
+from collections import defaultdict
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -13,6 +17,76 @@ from transformers import AutoTokenizer
 
 
 MODEL_ID = "Zyphra/ZAYA1-8B"
+
+
+class Profiler:
+    def __init__(self, enabled: bool = False, profile_layers: bool = False):
+        self.enabled = enabled
+        self.profile_layers = profile_layers
+        self.events: list[dict[str, Any]] = []
+        self.counters: dict[str, float] = defaultdict(float)
+        self.counts: dict[str, int] = defaultdict(int)
+        self._t0 = time.perf_counter()
+
+    @contextmanager
+    def span(self, name: str, *, force_eval: Any = None, **meta: Any):
+        if not self.enabled:
+            yield
+            return
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            if force_eval is not None:
+                mx.eval(force_eval)
+            elapsed = time.perf_counter() - start
+            self.events.append({"name": name, "ms": elapsed * 1000, **meta})
+            self.counters[name] += elapsed
+            self.counts[name] += 1
+
+    def add_event(self, name: str, ms: float, **meta: Any) -> None:
+        if self.enabled:
+            self.events.append({"name": name, "ms": ms, **meta})
+            self.counters[name] += ms / 1000
+            self.counts[name] += 1
+
+    def memory_info(self) -> dict[str, Any]:
+        metal = getattr(mx, "metal", None)
+        if metal is None:
+            return {}
+        info = {}
+        for key, attr in {
+            "active_memory_mb": "get_active_memory",
+            "peak_memory_mb": "get_peak_memory",
+            "cache_memory_mb": "get_cache_memory",
+        }.items():
+            fn = getattr(metal, attr, None)
+            if fn is not None:
+                try:
+                    info[key] = fn() / (1024 * 1024)
+                except Exception:
+                    pass
+        return info
+
+    def report(self) -> dict[str, Any]:
+        total = time.perf_counter() - self._t0
+        summary = []
+        for name, seconds in sorted(self.counters.items(), key=lambda item: item[1], reverse=True):
+            count = self.counts[name]
+            summary.append({"name": name, "count": count, "total_ms": seconds * 1000, "avg_ms": seconds * 1000 / count})
+        return {"total_wall_ms": total * 1000, "summary": summary, "events": self.events, "memory": self.memory_info()}
+
+    def print_report(self) -> None:
+        if not self.enabled:
+            return
+        report = self.report()
+        print("\n\n=== MLX profile ===")
+        for row in report["summary"]:
+            print(f"{row['name']:<28} {row['count']:>5}x {row['total_ms']:>10.1f} ms avg {row['avg_ms']:>8.1f} ms")
+        if report["memory"]:
+            mem = ", ".join(f"{k}={v:.1f}" for k, v in report["memory"].items())
+            print(f"memory: {mem}")
+        print(f"total wall: {report['total_wall_ms']:.1f} ms")
 
 
 @dataclass
@@ -352,9 +426,10 @@ class MLPLayer(nn.Module):
 
 
 class ZayaModel(nn.Module):
-    def __init__(self, args: ZayaArgs):
+    def __init__(self, args: ZayaArgs, profiler: Profiler | None = None):
         super().__init__()
         self.args = args
+        self.profiler = profiler
         self.embed_tokens = nn.Embedding(args.vocab_size, args.hidden_size)
         self.layers = [
             MLPLayer(args, i) if i % 2 == 1 else AttentionLayer(args, i)
@@ -375,8 +450,13 @@ class ZayaModel(nn.Module):
         cos, sin = rotary_embeddings(self.args, mx.arange(seq_len))
         residual = None
         prev_router_hidden_states = None
-        for layer in self.layers:
-            h, residual, prev_router_hidden_states = layer(h, residual, mask, cca_mask, cos, sin, prev_router_hidden_states)
+        for i, layer in enumerate(self.layers):
+            if self.profiler and self.profiler.profile_layers:
+                kind = "mlp" if isinstance(layer, MLPLayer) else "attn"
+                with self.profiler.span(f"layer.{kind}", force_eval=h, layer=i, seq_len=seq_len):
+                    h, residual, prev_router_hidden_states = layer(h, residual, mask, cca_mask, cos, sin, prev_router_hidden_states)
+            else:
+                h, residual, prev_router_hidden_states = layer(h, residual, mask, cca_mask, cos, sin, prev_router_hidden_states)
         if self.args.scale_residual_merge:
             residual, h = self.res_scale(residual, h)
         residual = h if residual is None else h + residual
@@ -384,10 +464,10 @@ class ZayaModel(nn.Module):
 
 
 class ZayaForCausalLM(nn.Module):
-    def __init__(self, args: ZayaArgs):
+    def __init__(self, args: ZayaArgs, profiler: Profiler | None = None):
         super().__init__()
         self.args = args
-        self.model = ZayaModel(args)
+        self.model = ZayaModel(args, profiler)
         if not args.tie_word_embeddings:
             self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=args.lm_head_bias)
 
@@ -408,15 +488,23 @@ class ZayaForCausalLM(nn.Module):
         return sanitized
 
 
-def load_model(model_path: Path) -> ZayaForCausalLM:
-    args = ZayaArgs.from_json(model_path / "config.json")
-    model = ZayaForCausalLM(args)
+def load_model(model_path: Path, profiler: Profiler | None = None) -> ZayaForCausalLM:
+    with (profiler.span("read_config") if profiler else nullcontext()):
+        args = ZayaArgs.from_json(model_path / "config.json")
+    model = ZayaForCausalLM(args, profiler)
     weights = {}
-    for shard in sorted(model_path.glob("model-*.safetensors")):
+    shards = sorted(model_path.glob("model-*.safetensors"))
+    for shard in shards:
+        start = time.perf_counter()
         weights.update(mx.load(str(shard)))
-    weights = model.sanitize(weights)
-    model.load_weights(list(weights.items()), strict=True)
-    mx.eval(model.parameters())
+        if profiler:
+            profiler.add_event("load_shard", (time.perf_counter() - start) * 1000, shard=shard.name)
+    with (profiler.span("sanitize_weights") if profiler else nullcontext()):
+        weights = model.sanitize(weights)
+    with (profiler.span("load_weights") if profiler else nullcontext()):
+        model.load_weights(list(weights.items()), strict=True)
+    with (profiler.span("eval_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
+        pass
     return model
 
 
@@ -426,17 +514,32 @@ def render_messages(tokenizer, messages: list[dict[str, str]]) -> str:
     return "\n".join(f"{message['role']}: {message['content']}" for message in messages) + "\nassistant:"
 
 
-def generate_from_messages(model, tokenizer, messages: list[dict[str, str]], max_new_tokens: int, temperature: float):
-    text = render_messages(tokenizer, messages)
-    token_ids = tokenizer(text, return_tensors="np")["input_ids"]
+def generate_from_messages(
+    model,
+    tokenizer,
+    messages: list[dict[str, str]],
+    max_new_tokens: int,
+    temperature: float,
+    profiler: Profiler | None = None,
+):
+    with (profiler.span("render_prompt") if profiler else nullcontext()):
+        text = render_messages(tokenizer, messages)
+    with (profiler.span("tokenize_prompt") if profiler else nullcontext()):
+        token_ids = tokenizer(text, return_tensors="np")["input_ids"]
     tokens = mx.array(token_ids)
-    for _ in range(max_new_tokens):
+    if profiler:
+        profiler.events.append({"name": "prompt", "prompt_tokens": int(tokens.shape[1]), "max_new_tokens": max_new_tokens})
+    for i in range(max_new_tokens):
+        start = time.perf_counter()
         logits = model(tokens)[:, -1, :]
         if temperature > 0:
             next_token = mx.random.categorical(logits / temperature, num_samples=1)
         else:
             next_token = mx.argmax(logits, axis=-1, keepdims=True)
         mx.eval(next_token)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        if profiler:
+            profiler.add_event("generate_token", elapsed_ms, token_index=i, context_tokens=int(tokens.shape[1]))
         token = int(next_token.item())
         if token == tokenizer.eos_token_id:
             break
@@ -444,9 +547,9 @@ def generate_from_messages(model, tokenizer, messages: list[dict[str, str]], max
         tokens = mx.concatenate([tokens, next_token], axis=1)
 
 
-def generate(model, tokenizer, prompt: str, max_new_tokens: int, temperature: float):
+def generate(model, tokenizer, prompt: str, max_new_tokens: int, temperature: float, profiler: Profiler | None = None):
     messages = [{"role": "user", "content": prompt}]
-    yield from generate_from_messages(model, tokenizer, messages, max_new_tokens, temperature)
+    yield from generate_from_messages(model, tokenizer, messages, max_new_tokens, temperature, profiler)
 
 
 def main() -> None:
@@ -457,14 +560,21 @@ def main() -> None:
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--model-path", type=Path, help="Use an existing Hugging Face snapshot directory.")
     parser.add_argument("--show-token-ids", action="store_true", help="Print generated token IDs for smoke tests.")
+    parser.add_argument("--profile", action="store_true", help="Print timing and MLX memory profile after the run.")
+    parser.add_argument("--profile-layers", action="store_true", help="Also synchronize and time each transformer layer. Slower, but shows where generation time goes.")
+    parser.add_argument("--profile-json", type=Path, help="Write full profiling events and summary as JSON.")
     args = parser.parse_args()
 
-    model_path = args.model_path or Path(snapshot_download(MODEL_ID, local_files_only=args.local_files_only))
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    model = load_model(model_path)
+    profiler = Profiler(enabled=args.profile or args.profile_json is not None or args.profile_layers, profile_layers=args.profile_layers)
+
+    with profiler.span("resolve_model_path"):
+        model_path = args.model_path or Path(snapshot_download(MODEL_ID, local_files_only=args.local_files_only))
+    with profiler.span("load_tokenizer"):
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    model = load_model(model_path, profiler)
 
     pieces = []
-    for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature):
+    for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature, profiler):
         if args.show_token_ids:
             print(f"[token_id={token}]", flush=True)
         text = tokenizer.decode([token], skip_special_tokens=True)
@@ -472,6 +582,10 @@ def main() -> None:
         print(text, end="", flush=True)
     if pieces:
         print()
+    profiler.print_report()
+    if args.profile_json:
+        args.profile_json.write_text(json.dumps(profiler.report(), indent=2))
+        print(f"profile JSON written to {args.profile_json}")
 
 
 if __name__ == "__main__":
