@@ -698,13 +698,20 @@ def main() -> None:
     parser.add_argument("--profile", action="store_true", help="Print timing and MLX memory profile after the run.")
     parser.add_argument("--profile-layers", action="store_true", help="Also synchronize and time each transformer layer. Slower, but shows where generation time goes.")
     parser.add_argument("--profile-json", type=Path, help="Write full profiling events and summary as JSON.")
-    parser.add_argument("--cache", action="store_true", help="Experimental: prefill once, then decode one token at a time with KV/CCA cache.")
+    parser.add_argument("--cache", dest="cache", action="store_true", default=True, help="Use KV/CCA cached generation (default).")
+    parser.add_argument("--no-cache", dest="cache", action="store_false", help="Disable KV/CCA cached generation and recompute the full context each token.")
     parser.add_argument(
         "--moe-decode-fast-path",
+        dest="moe_decode_fast_path",
         action="store_true",
-        help="Experimental: evaluate only the chosen MoE expert during single-token decode. "
-        "Skips the default full-expert evaluation when hidden_states shape is (1, 1, H). "
-        "May increase or decrease latency depending on choices.item() sync overhead.",
+        default=True,
+        help="Use single-token MoE expert short-circuit during decode (default).",
+    )
+    parser.add_argument(
+        "--no-moe-decode-fast-path",
+        dest="moe_decode_fast_path",
+        action="store_false",
+        help="Disable single-token MoE expert short-circuit.",
     )
     args = parser.parse_args()
 

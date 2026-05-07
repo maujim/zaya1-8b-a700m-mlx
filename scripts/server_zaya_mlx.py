@@ -66,7 +66,7 @@ def openai_chunk(completion_id: str, content: str | None, finish_reason: str | N
     return f"data: {json.dumps(payload)}\n\n"
 
 
-def create_app(quant: str = "full", moe_decode_fast_path: bool = False, use_cache: bool = False) -> FastAPI:
+def create_app(quant: str = "full", moe_decode_fast_path: bool = True, use_cache: bool = True) -> FastAPI:
     app = FastAPI(title="ZAYA MLX OpenAI-compatible server")
 
     profiler = Profiler(enabled=True)
@@ -156,11 +156,20 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8123)
     parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or quick dynamic Q8 quantization after load.")
-    parser.add_argument("--cache", action="store_true", help="Experimental: use KV/CCA cache for generation.")
+    parser.add_argument("--cache", dest="cache", action="store_true", default=True, help="Use KV/CCA cached generation (default).")
+    parser.add_argument("--no-cache", dest="cache", action="store_false", help="Disable KV/CCA cached generation.")
     parser.add_argument(
         "--moe-decode-fast-path",
+        dest="moe_decode_fast_path",
         action="store_true",
-        help="Experimental: evaluate only the chosen MoE expert during single-token decode.",
+        default=True,
+        help="Use single-token MoE expert short-circuit during decode (default).",
+    )
+    parser.add_argument(
+        "--no-moe-decode-fast-path",
+        dest="moe_decode_fast_path",
+        action="store_false",
+        help="Disable single-token MoE expert short-circuit.",
     )
     args = parser.parse_args()
 

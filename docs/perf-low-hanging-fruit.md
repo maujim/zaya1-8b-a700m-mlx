@@ -7,16 +7,16 @@ The current bottlenecks are:
 1. ~~During generation we repeatedly run the whole growing context through the model.~~ Experimental `--cache` mode pre-fills once and decodes one token at a time.
 2. ~~Attention layers do not cache K/V.~~ Experimental `--cache` mode stores repeated post-RoPE K/V per attention layer.
 3. ~~ZAYA CCA layers do not cache their convolution state or previous hidden state.~~ Experimental `--cache` mode stores CCA conv windows and delayed hidden state.
-4. ~~MoE MLP layers evaluate every expert and mask afterwards.~~ Implemented behind `--moe-decode-fast-path` for CLI and server.
+4. ~~MoE MLP layers evaluate every expert and mask afterwards.~~ Enabled by default for CLI and server; use `--no-moe-decode-fast-path` to disable.
 5. ~~We rebuild small helper tensors like RoPE and causal masks every forward.~~ Implemented with per-model mask/RoPE caches.
 
 ## Current status
 
-- Done: Task 1 — MoE single-token decode short-circuit (`--moe-decode-fast-path`).
+- Done: Task 1 — MoE single-token decode short-circuit (default on; `--no-moe-decode-fast-path` disables).
 - Done: Task 2 — Rotary and causal mask reuse.
 - Done: Task 3 — KV/CCA cache skeleton (`ZayaGenerationCache` and threaded signatures).
-- Done: Task 4 — opt-in prefill/decode cached generation loop using the cache skeleton (`--cache` for CLI and server).
-- Next: validate token parity/performance more broadly, then decide whether any flags should become defaults.
+- Done: Task 4 — prefill/decode cached generation loop using the cache skeleton (default on; `--no-cache` disables).
+- Next: validate token parity/performance broadly and keep iterating on any cache correctness/perf issues.
 
 ## Shared repo context
 
@@ -549,7 +549,7 @@ If full model is too expensive, synthetic is enough for skeleton.
 
 # Task 4 — Prefill once, decode one token at a time using cache
 
-Status: implemented experimentally on `master` behind `--cache` for CLI and server.
+Status: implemented on `master` and enabled by default for CLI and server; pass `--no-cache` to compare against uncached generation.
 
 Suggested branch: `perf/prefill-decode-loop`
 
