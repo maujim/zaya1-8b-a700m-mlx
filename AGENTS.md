@@ -26,7 +26,7 @@ For a detailed generation trace:
 ## Notes
 
 - The scripts should assume the Hugging Face snapshot is usually cached, but allow `snapshot_download()` to fetch it if missing.
-- Avoid adding `--local-files-only` flags to the main scripts.
+- Avoid adding `--local-files-only` flags.
 - `scripts/run_zaya_mlx.py` is the MLX implementation/library used by the simpler scripts.
 - `.pi/extensions/zaya-mlx.ts` registers the local OpenAI-compatible server as `zaya-mlx/zaya-mlx` for pi.
 - MLX scripts support `--quant full` and `--quant q8`; Q8 is dynamic in-memory quantization after loading and must not write a second model copy to disk.

@@ -568,7 +568,6 @@ def main() -> None:
     parser.add_argument("prompt", nargs="?", default="Write one sentence about Apple Silicon.")
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--model-path", type=Path, help="Use an existing Hugging Face snapshot directory.")
     parser.add_argument("--show-token-ids", action="store_true", help="Print generated token IDs for smoke tests.")
     parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or quick dynamic Q8 quantization after load.")
@@ -580,7 +579,7 @@ def main() -> None:
     profiler = Profiler(enabled=args.profile or args.profile_json is not None or args.profile_layers, profile_layers=args.profile_layers)
 
     with profiler.span("resolve_model_path"):
-        model_path = args.model_path or Path(snapshot_download(MODEL_ID, local_files_only=args.local_files_only))
+        model_path = args.model_path or Path(snapshot_download(MODEL_ID))
     with profiler.span("load_tokenizer"):
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     model = load_model(model_path, profiler, quant=args.quant)
