@@ -6,7 +6,7 @@ import json
 import time
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +85,39 @@ class Profiler:
             mem = ", ".join(f"{k}={v:.1f}" for k, v in report["memory"].items())
             print(f"memory: {mem}")
         print(f"total wall: {report['total_wall_ms']:.1f} ms")
+
+
+@dataclass
+class ZayaGenerationCache:
+    """MLX equivalent of upstream ZayaDynamicCache.
+
+    Stores KV cache for attention layers alongside CCA convolution state
+    and previous hidden state for val_proj2 during single-token decode.
+
+    Fields:
+        args: Model configuration (fixed per model instance).
+        key_states: Per-layer cached attention K (post-RoPE, post-GQA-repeat).
+        value_states: Per-layer cached attention V (post-GQA-repeat).
+        conv_states: Per-layer CCA convolution window [B, 2, C] in MLX Conv1d layout.
+        prev_hs: Per-layer previous hidden state for val_proj2 delay [B, H].
+        seen_tokens: Number of tokens already consumed (position offset for decode).
+        has_previous_state: Distinguishes prefill from decode.
+    """
+
+    args: ZayaArgs
+    key_states: list[mx.array | None] = field(init=False)
+    value_states: list[mx.array | None] = field(init=False)
+    conv_states: list[mx.array | None] = field(init=False)
+    prev_hs: list[mx.array | None] = field(init=False)
+    seen_tokens: int = 0
+    has_previous_state: bool = False
+
+    def __post_init__(self):
+        n = self.args.num_hidden_layers
+        self.key_states = [None] * n
+        self.value_states = [None] * n
+        self.conv_states = [None] * n
+        self.prev_hs = [None] * n
 
 
 @dataclass
@@ -211,9 +244,10 @@ def apply_rope(q: mx.array, k: mx.array, cos: mx.array, sin: mx.array):
 
 
 class CCA(nn.Module):
-    def __init__(self, args: ZayaArgs):
+    def __init__(self, args: ZayaArgs, layer_n: int):
         super().__init__()
         self.args = args
+        self.layer_n = layer_n
         self.hidden_size = args.hidden_size
         self.num_kv_heads = args.num_query_groups
         self.num_q_heads = args.cca_num_q_heads
@@ -235,7 +269,7 @@ class CCA(nn.Module):
         ]
         self.temp = mx.zeros((self.num_kv_heads,))
 
-    def __call__(self, hidden_states: mx.array, cca_mask: mx.array | None):
+    def __call__(self, hidden_states: mx.array, cca_mask: mx.array | None, cache: ZayaGenerationCache | None = None):
         if cca_mask is not None and hidden_states.shape[1] > 1:
             hidden_states = hidden_states * cca_mask[:, :, None]
 
@@ -274,17 +308,18 @@ class CCA(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, args: ZayaArgs):
+    def __init__(self, args: ZayaArgs, layer_n: int):
         super().__init__()
         self.args = args
+        self.layer_n = layer_n
         self.head_dim = args.hidden_size // args.num_attention_heads
         self.num_key_value_groups = args.num_attention_heads // args.num_key_value_heads
-        self.qkv = CCA(args)
+        self.qkv = CCA(args, layer_n)
         self.o_proj = nn.Linear((args.num_attention_heads // 2) * self.head_dim, args.hidden_size, bias=args.attention_bias)
 
-    def __call__(self, x: mx.array, mask: mx.array | None, cca_mask: mx.array | None, cos: mx.array, sin: mx.array):
+    def __call__(self, x: mx.array, mask: mx.array | None, cca_mask: mx.array | None, cos: mx.array, sin: mx.array, cache: ZayaGenerationCache | None = None):
         bsz, seq_len, _ = x.shape
-        q, k, v = self.qkv(x, cca_mask)
+        q, k, v = self.qkv(x, cca_mask, cache=cache)
         q = q.reshape(bsz, seq_len, self.args.num_attention_heads // 2, self.head_dim).transpose(0, 2, 1, 3)
         k = k.reshape(bsz, seq_len, self.args.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
         v = v.reshape(bsz, seq_len, self.args.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
@@ -391,17 +426,17 @@ class AttentionLayer(nn.Module):
     def __init__(self, args: ZayaArgs, layer_n: int):
         super().__init__()
         self.args = args
-        self.self_attn = Attention(args)
+        self.self_attn = Attention(args, layer_n)
         self.input_norm = RMSNorm(args.hidden_size, args.norm_epsilon)
         if args.scale_residual_merge:
             self.res_scale = ResidualScaling(args, layer_n)
 
-    def __call__(self, hidden_states, residual, mask, cca_mask, cos, sin, prev_router_hidden_states):
+    def __call__(self, hidden_states, residual, mask, cca_mask, cos, sin, prev_router_hidden_states, cache: ZayaGenerationCache | None = None):
         if self.args.scale_residual_merge:
             residual, hidden_states = self.res_scale(residual, hidden_states)
         residual = hidden_states if residual is None else hidden_states + residual
         hidden_states = self.input_norm(residual)
-        hidden_states = self.self_attn(hidden_states, mask, cca_mask, cos, sin)
+        hidden_states = self.self_attn(hidden_states, mask, cca_mask, cos, sin, cache=cache)
         return hidden_states, residual, prev_router_hidden_states
 
 
@@ -414,7 +449,7 @@ class MLPLayer(nn.Module):
         if args.scale_residual_merge:
             self.res_scale = ResidualScaling(args, layer_n)
 
-    def __call__(self, hidden_states, residual, mask, cca_mask, cos, sin, prev_router_hidden_states):
+    def __call__(self, hidden_states, residual, mask, cca_mask, cos, sin, prev_router_hidden_states, cache: ZayaGenerationCache | None = None):
         if self.args.scale_residual_merge:
             residual, hidden_states = self.res_scale(residual, hidden_states)
         residual = hidden_states if residual is None else hidden_states + residual
@@ -437,7 +472,7 @@ class ZayaModel(nn.Module):
             self.res_scale = ResidualScaling(args, args.num_hidden_layers)
         self.final_norm = RMSNorm(args.hidden_size, args.norm_epsilon)
 
-    def __call__(self, input_ids: mx.array, attention_mask: mx.array | None = None):
+    def __call__(self, input_ids: mx.array, attention_mask: mx.array | None = None, cache: ZayaGenerationCache | None = None):
         h = self.embed_tokens(input_ids)
         seq_len = h.shape[1]
         mask = mx.triu(mx.full((seq_len, seq_len), -mx.inf), k=1).astype(h.dtype)
@@ -452,9 +487,9 @@ class ZayaModel(nn.Module):
             if self.profiler and self.profiler.profile_layers:
                 kind = "mlp" if isinstance(layer, MLPLayer) else "attn"
                 with self.profiler.span(f"layer.{kind}", force_eval=h, layer=i, seq_len=seq_len):
-                    h, residual, prev_router_hidden_states = layer(h, residual, mask, cca_mask, cos, sin, prev_router_hidden_states)
+                    h, residual, prev_router_hidden_states = layer(h, residual, mask, cca_mask, cos, sin, prev_router_hidden_states, cache=cache)
             else:
-                h, residual, prev_router_hidden_states = layer(h, residual, mask, cca_mask, cos, sin, prev_router_hidden_states)
+                h, residual, prev_router_hidden_states = layer(h, residual, mask, cca_mask, cos, sin, prev_router_hidden_states, cache=cache)
         if self.args.scale_residual_merge:
             residual, h = self.res_scale(residual, h)
         residual = h if residual is None else h + residual
@@ -469,8 +504,8 @@ class ZayaForCausalLM(nn.Module):
         if not args.tie_word_embeddings:
             self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=args.lm_head_bias)
 
-    def __call__(self, input_ids: mx.array, attention_mask: mx.array | None = None):
-        out = self.model(input_ids, attention_mask)
+    def __call__(self, input_ids: mx.array, attention_mask: mx.array | None = None, cache: ZayaGenerationCache | None = None):
+        out = self.model(input_ids, attention_mask, cache=cache)
         if self.args.tie_word_embeddings:
             return self.model.embed_tokens.as_linear(out)
         return self.lm_head(out)
