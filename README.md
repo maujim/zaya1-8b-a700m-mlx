@@ -1,6 +1,14 @@
-# ZAYA1-8B on Apple Silicon
+# ZAYA1-8B MLX port
 
-Small local experiments for `Zyphra/ZAYA1-8B`.
+Experimental Apple Silicon MLX port for `Zyphra/ZAYA1-8B`. It is useful for local testing and profiling, but it is not production-ready.
+
+## Requirements
+
+- macOS on Apple Silicon
+- Python 3.12+
+- `uv`
+- Enough disk/RAM for the HF snapshot (~18GB weights)
+- Hugging Face access/network for the first download; after that it uses the normal HF cache
 
 ## Setup
 
@@ -8,43 +16,60 @@ Small local experiments for `Zyphra/ZAYA1-8B`.
 uv sync
 ```
 
-The scripts use the normal Hugging Face cache. If the snapshot is already present, it is reused; otherwise Hugging Face downloads it.
+## Run stuff
 
-## Scripts
-
-Load the model with the local MLX port and print profiling by default:
+Load with the local MLX port, profiled by default:
 
 ```bash
 uv run python scripts/load_zaya_mlx.py
 ```
 
-Load the model through default Hugging Face Transformers/PyTorch, CPU by default:
+Load with Hugging Face/Transformers/PyTorch, CPU by default:
 
 ```bash
 uv run python scripts/load_zaya_hf.py
 ```
 
-Run the Python sum-code prompt through MLX with a usable token budget and profiling by default:
+Ask the MLX model to write a tiny Python sum function, profiled by default:
 
 ```bash
-uv run python scripts/run_python_sum_mlx.py
+./scripts/run_python_sum_mlx.sh
 ```
 
-Serve the MLX port through a minimal OpenAI-compatible API:
+Try in-memory Q8 quantization, no extra model copy on disk:
+
+```bash
+./scripts/run_python_sum_mlx.sh --quant q8
+```
+
+Run the OpenAI-compatible MLX server:
 
 ```bash
 uv run python scripts/server_zaya_mlx.py --port 8123
 ```
 
-This repo includes a project-local pi extension in `.pi/extensions/zaya-mlx.ts` that registers `zaya-mlx/zaya-mlx` against `http://127.0.0.1:8123/v1`. Start the server, reload pi, then select that model.
+## pi integration
 
-Optional detailed artifacts:
+This repo has a local pi extension at:
 
-```bash
-uv run python scripts/run_python_sum_mlx.py --profile-json profile.json
-uv run python scripts/run_python_sum_mlx.py --profile-layers
+```text
+.pi/extensions/zaya-mlx.ts
 ```
 
-## Notes
+Start the server, run `/reload` in pi, then select:
 
-`scripts/run_zaya_mlx.py` contains the experimental local MLX implementation used by the MLX scripts. It does not implement the upstream KV/CCA generation cache yet, and its MoE path still evaluates each expert over the whole batch before masking routed outputs. Those are the main targets for improving `scripts/run_python_sum_mlx.py` timings.
+```text
+zaya-mlx/zaya-mlx
+```
+
+## Useful profiling knobs
+
+```bash
+./scripts/run_python_sum_mlx.sh --profile-json profile.json
+./scripts/run_python_sum_mlx.sh --profile-layers
+uv run python scripts/server_zaya_mlx.py --quant q8
+```
+
+## What is still bad
+
+`scripts/run_zaya_mlx.py` is the experimental MLX implementation and CLI. `scripts/run_python_sum_mlx.sh` is just a tiny wrapper around it with the Python sum prompt. It is slow because generation has no KV/CCA cache yet, and the MoE path still evaluates every expert over the whole batch before masking routed outputs.

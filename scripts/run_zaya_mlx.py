@@ -17,6 +17,7 @@ from transformers import AutoTokenizer
 
 
 MODEL_ID = "Zyphra/ZAYA1-8B"
+QUANT_CHOICES = ("full", "q8")
 
 
 class Profiler:
@@ -485,7 +486,9 @@ class ZayaForCausalLM(nn.Module):
         return sanitized
 
 
-def load_model(model_path: Path, profiler: Profiler | None = None) -> ZayaForCausalLM:
+def load_model(model_path: Path, profiler: Profiler | None = None, quant: str = "full") -> ZayaForCausalLM:
+    if quant not in QUANT_CHOICES:
+        raise ValueError(f"quant must be one of {QUANT_CHOICES}, got {quant!r}")
     with (profiler.span("read_config") if profiler else nullcontext()):
         args = ZayaArgs.from_json(model_path / "config.json")
     model = ZayaForCausalLM(args, profiler)
@@ -502,6 +505,17 @@ def load_model(model_path: Path, profiler: Profiler | None = None) -> ZayaForCau
         model.load_weights(list(weights.items()), strict=True)
     with (profiler.span("eval_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
         pass
+    if quant == "q8":
+        with (profiler.span("quantize_q8") if profiler else nullcontext()):
+            nn.quantize(
+                model,
+                bits=8,
+                group_size=64,
+                class_predicate=lambda _path, module: isinstance(module, nn.Linear)
+                and module.weight.shape[-1] % 64 == 0,
+            )
+        with (profiler.span("eval_quantized_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
+            pass
     return model
 
 
@@ -557,6 +571,7 @@ def main() -> None:
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--model-path", type=Path, help="Use an existing Hugging Face snapshot directory.")
     parser.add_argument("--show-token-ids", action="store_true", help="Print generated token IDs for smoke tests.")
+    parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or quick dynamic Q8 quantization after load.")
     parser.add_argument("--profile", action="store_true", help="Print timing and MLX memory profile after the run.")
     parser.add_argument("--profile-layers", action="store_true", help="Also synchronize and time each transformer layer. Slower, but shows where generation time goes.")
     parser.add_argument("--profile-json", type=Path, help="Write full profiling events and summary as JSON.")
@@ -568,7 +583,7 @@ def main() -> None:
         model_path = args.model_path or Path(snapshot_download(MODEL_ID, local_files_only=args.local_files_only))
     with profiler.span("load_tokenizer"):
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    model = load_model(model_path, profiler)
+    model = load_model(model_path, profiler, quant=args.quant)
 
     pieces = []
     for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature, profiler):
