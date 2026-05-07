@@ -621,8 +621,9 @@ def load_model(
         weights = model.sanitize(weights)
     with (profiler.span("load_weights") if profiler else nullcontext()):
         model.load_weights(list(weights.items()), strict=True)
-    with (profiler.span("eval_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
-        pass
+    if quant != "q8":
+        with (profiler.span("eval_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
+            pass
     if quant == "q8":
         q8_stats = {"selected": 0, "skipped_small": 0, "skipped_other": 0, "selected_params": 0}
 
@@ -653,8 +654,6 @@ def load_model(
             )
         if profiler:
             profiler.events.append({"name": "quantize_q8_stats", **q8_stats, "q8_min_weight_size": q8_min_weight_size})
-            profiler.counters["quantize_q8_selected_params"] += q8_stats["selected_params"] / 1_000_000
-            profiler.counts["quantize_q8_selected_params"] += 1
         with (profiler.span("eval_quantized_parameters", force_eval=model.parameters()) if profiler else nullcontext()):
             pass
     return model

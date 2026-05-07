@@ -83,7 +83,7 @@ Acceptance:
 
 ### 5. Speed up and tune Q8 quantization
 
-`--quant q8` is dynamic and in-memory. To reduce startup overhead and avoid quantizing tiny linears that do not move latency, the default path quantizes only Linear weights with at least 1,000,000 parameters. Use:
+`--quant q8` is dynamic and in-memory. To reduce startup overhead, Q8 skips the pre-quant full-parameter sync and avoids quantizing tiny linears that do not move latency. The default path quantizes only Linear weights with at least 1,000,000 parameters. Use:
 
 ```bash
 --q8-min-weight-size 0

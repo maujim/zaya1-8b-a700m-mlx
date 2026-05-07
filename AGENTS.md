@@ -30,6 +30,6 @@ For a detailed generation trace:
 - `scripts/run_zaya_mlx.py` is the MLX implementation/library used by the simpler scripts.
 - `.pi/extensions/zaya-mlx.ts` registers the local OpenAI-compatible server as `zaya-mlx/zaya-mlx` for pi.
 - MLX scripts support `--quant full` and `--quant q8`; Q8 is dynamic in-memory quantization after loading and must not write a second model copy to disk.
-- Q8 defaults to quantizing only large Linear weights (`--q8-min-weight-size 1000000`) for faster startup; use `--q8-min-weight-size 0` for exhaustive old behavior.
+- Q8 skips the pre-quant full-parameter sync and defaults to quantizing only large Linear weights (`--q8-min-weight-size 1000000`) for faster startup; use `--q8-min-weight-size 0` for exhaustive old behavior.
 - Fast generation paths are default-on in this dev repo: KV/CCA cache and MoE single-token fast path. Use `--no-cache` and `--no-moe-decode-fast-path` only for comparisons/debugging.
 - Current likely performance targets: prove cache correctness/token parity, improve profiling, and reduce any remaining Q8/cached decode overhead.

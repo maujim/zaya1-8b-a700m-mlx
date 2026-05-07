@@ -36,7 +36,7 @@ Ask the MLX model to write a tiny Python sum function, profiled by default:
 ./scripts/run_python_sum_mlx.sh
 ```
 
-Try in-memory Q8 quantization, no extra model copy on disk. By default Q8 only quantizes large Linear weights for faster startup; use `--q8-min-weight-size 0` to reproduce exhaustive quantization.
+Try in-memory Q8 quantization, no extra model copy on disk. Q8 skips the pre-quant full-parameter sync, then quantizes only large Linear weights by default for faster startup; use `--q8-min-weight-size 0` to reproduce exhaustive quantization.
 
 ```bash
 ./scripts/run_python_sum_mlx.sh --quant q8
