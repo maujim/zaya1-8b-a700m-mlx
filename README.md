@@ -64,6 +64,27 @@ Start the server, run `/reload` in pi, then select:
 zaya-mlx/zaya-mlx
 ```
 
+## Token parity checks
+
+Before adding more speedups, run the conservative parity harness. By default it loads one full-precision model, uses one short prompt, generates 8 deterministic tokens, and compares token IDs for cache on/off and MoE decode fast path on/off. Q8 is opt-in to avoid extra memory/startup pressure on 24GB machines.
+
+```bash
+uv run python scripts/compare_generation_modes.py
+uv run python scripts/compare_generation_modes.py --max-new-tokens 4 --json parity.json
+uv run python scripts/compare_generation_modes.py --debug-cache
+uv run python scripts/compare_generation_modes.py --mode cache-fast --max-new-tokens 2 --stop-on-first-fail  # tiny subset, baseline auto-added
+uv run python scripts/compare_generation_modes.py --dry-run --default-prompts-file  # show matrix, no model load
+uv run python scripts/compare_generation_modes.py --include-q8  # slower; loads a second quantized model group
+```
+
+The table is:
+
+```text
+mode | baseline | prompt_tokens | generated_ids | first_mismatch | expected_id | actual_id | expected_text | actual_text | pass/fail
+```
+
+The script exits nonzero on any mismatch.
+
 ## Useful profiling and comparison knobs
 
 ```bash

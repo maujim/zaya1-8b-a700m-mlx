@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
@@ -593,10 +594,14 @@ class ZayaForCausalLM(nn.Module):
         return sanitized
 
 
-def enable_moe_decode_fast_path(model: ZayaForCausalLM) -> None:
+def set_moe_decode_fast_path(model: ZayaForCausalLM, enabled: bool) -> None:
     for layer in model.model.layers:
         if isinstance(layer, MLPLayer):
-            layer.zaya_block.experts.moe_decode_fast_path = True
+            layer.zaya_block.experts.moe_decode_fast_path = enabled
+
+
+def enable_moe_decode_fast_path(model: ZayaForCausalLM) -> None:
+    set_moe_decode_fast_path(model, True)
 
 
 def load_model(
@@ -671,6 +676,34 @@ def sample_next_token(logits: mx.array, temperature: float) -> mx.array:
     return mx.argmax(logits, axis=-1, keepdims=True)
 
 
+def validate_generation_cache(cache: ZayaGenerationCache, batch_size: int) -> None:
+    """Assert basic cache shape invariants after a cached model call."""
+    args = cache.args
+    expected_tokens = cache.seen_tokens
+    expected_conv_channels = (args.cca_num_q_heads + args.num_query_groups) * (
+        args.hidden_size // args.num_attention_heads
+    )
+    expected_conv = (batch_size, args.cca_time0 + args.cca_time1 - 2, expected_conv_channels)
+    expected_prev = (batch_size, args.hidden_size)
+    for layer in range(args.num_hidden_layers):
+        key = cache.key_states[layer]
+        value = cache.value_states[layer]
+        conv = cache.conv_states[layer]
+        prev = cache.prev_hs[layer]
+        assert key is not None, f"cache.key_states[{layer}] is None"
+        assert value is not None, f"cache.value_states[{layer}] is None"
+        assert conv is not None, f"cache.conv_states[{layer}] is None"
+        assert prev is not None, f"cache.prev_hs[{layer}] is None"
+        assert key.shape[2] == expected_tokens, (
+            f"cache.key_states[{layer}].shape[2]={key.shape[2]} != seen_tokens={expected_tokens}"
+        )
+        assert value.shape[2] == expected_tokens, (
+            f"cache.value_states[{layer}].shape[2]={value.shape[2]} != seen_tokens={expected_tokens}"
+        )
+        assert conv.shape == expected_conv, f"cache.conv_states[{layer}].shape={conv.shape} != {expected_conv}"
+        assert prev.shape == expected_prev, f"cache.prev_hs[{layer}].shape={prev.shape} != {expected_prev}"
+
+
 def generate_from_messages(
     model,
     tokenizer,
@@ -679,7 +712,10 @@ def generate_from_messages(
     temperature: float,
     profiler: Profiler | None = None,
     use_cache: bool = False,
+    debug_cache: bool | None = None,
 ):
+    if debug_cache is None:
+        debug_cache = os.environ.get("ZAYA_DEBUG_CACHE") == "1"
     with (profiler.span("render_prompt") if profiler else nullcontext()):
         text = render_messages(tokenizer, messages)
     with (profiler.span("tokenize_prompt") if profiler else nullcontext()):
@@ -695,6 +731,8 @@ def generate_from_messages(
         if cache is not None:
             cache.seen_tokens += int(next_input.shape[1])
             cache.has_previous_state = True
+            if debug_cache:
+                validate_generation_cache(cache, batch_size=int(tokens.shape[0]))
         next_token = sample_next_token(logits, temperature)
         mx.eval(next_token)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -709,9 +747,18 @@ def generate_from_messages(
         next_input = next_token if use_cache else tokens
 
 
-def generate(model, tokenizer, prompt: str, max_new_tokens: int, temperature: float, profiler: Profiler | None = None, use_cache: bool = False):
+def generate(
+    model,
+    tokenizer,
+    prompt: str,
+    max_new_tokens: int,
+    temperature: float,
+    profiler: Profiler | None = None,
+    use_cache: bool = False,
+    debug_cache: bool | None = None,
+):
     messages = [{"role": "user", "content": prompt}]
-    yield from generate_from_messages(model, tokenizer, messages, max_new_tokens, temperature, profiler, use_cache=use_cache)
+    yield from generate_from_messages(model, tokenizer, messages, max_new_tokens, temperature, profiler, use_cache=use_cache, debug_cache=debug_cache)
 
 
 def main() -> None:
@@ -733,6 +780,7 @@ def main() -> None:
     parser.add_argument("--profile-json", type=Path, help="Write full profiling events and summary as JSON.")
     parser.add_argument("--cache", dest="cache", action="store_true", default=True, help="Use KV/CCA cached generation (default).")
     parser.add_argument("--no-cache", dest="cache", action="store_false", help="Disable KV/CCA cached generation and recompute the full context each token.")
+    parser.add_argument("--debug-cache", action="store_true", help="Assert KV/CCA cache shape invariants after each cached model call. Also available with ZAYA_DEBUG_CACHE=1.")
     parser.add_argument(
         "--moe-decode-fast-path",
         dest="moe_decode_fast_path",
@@ -760,7 +808,7 @@ def main() -> None:
         enable_moe_decode_fast_path(model)
 
     pieces = []
-    for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature, profiler, use_cache=args.cache):
+    for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature, profiler, use_cache=args.cache, debug_cache=args.debug_cache):
         if args.show_token_ids:
             print(f"[token_id={token}]", flush=True)
         text = tokenizer.decode([token], skip_special_tokens=True)
