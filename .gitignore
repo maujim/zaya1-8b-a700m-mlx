@@ -3,7 +3,7 @@
 __pycache__/
 *.py[cod]
 .DS_Store
-.ralph/*.state.json
+.ralph/
 
 .env
 worktrees/

@@ -15,7 +15,7 @@ from huggingface_hub import snapshot_download
 from pydantic import BaseModel, Field
 from transformers import AutoTokenizer
 
-from run_zaya_mlx import MODEL_ID, QUANT_CHOICES, Profiler, generate_from_messages, load_model
+from run_zaya_mlx import MODEL_ID, QUANT_CHOICES, Profiler, enable_moe_decode_fast_path, generate_from_messages, load_model
 
 SERVER_MODEL_ID = "zaya-mlx"
 
@@ -66,7 +66,7 @@ def openai_chunk(completion_id: str, content: str | None, finish_reason: str | N
     return f"data: {json.dumps(payload)}\n\n"
 
 
-def create_app(quant: str = "full") -> FastAPI:
+def create_app(quant: str = "full", moe_decode_fast_path: bool = False) -> FastAPI:
     app = FastAPI(title="ZAYA MLX OpenAI-compatible server")
 
     profiler = Profiler(enabled=True)
@@ -75,6 +75,8 @@ def create_app(quant: str = "full") -> FastAPI:
     print(f"MLX model path: {model_path}", flush=True)
 
     model = load_model(model_path, profiler, quant=quant)
+    if moe_decode_fast_path:
+        enable_moe_decode_fast_path(model)
     with profiler.span("final_parameter_sync", force_eval=model.parameters()):
         pass
     print("MLX model loaded and synchronized", flush=True)
@@ -150,9 +152,14 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8123)
     parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or quick dynamic Q8 quantization after load.")
+    parser.add_argument(
+        "--moe-decode-fast-path",
+        action="store_true",
+        help="Experimental: evaluate only the chosen MoE expert during single-token decode.",
+    )
     args = parser.parse_args()
 
-    uvicorn.run(create_app(args.quant), host=args.host, port=args.port, log_level="info")
+    uvicorn.run(create_app(args.quant, moe_decode_fast_path=args.moe_decode_fast_path), host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":

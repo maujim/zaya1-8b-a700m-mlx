@@ -537,6 +537,12 @@ class ZayaForCausalLM(nn.Module):
         return sanitized
 
 
+def enable_moe_decode_fast_path(model: ZayaForCausalLM) -> None:
+    for layer in model.model.layers:
+        if isinstance(layer, MLPLayer):
+            layer.zaya_block.experts.moe_decode_fast_path = True
+
+
 def load_model(model_path: Path, profiler: Profiler | None = None, quant: str = "full") -> ZayaForCausalLM:
     if quant not in QUANT_CHOICES:
         raise ValueError(f"quant must be one of {QUANT_CHOICES}, got {quant!r}")
@@ -643,9 +649,7 @@ def main() -> None:
     model = load_model(model_path, profiler, quant=args.quant)
 
     if args.moe_decode_fast_path:
-        for layer in model.model.layers:
-            if isinstance(layer, MLPLayer):
-                layer.zaya_block.experts.moe_decode_fast_path = True
+        enable_moe_decode_fast_path(model)
 
     pieces = []
     for token in generate(model, tokenizer, args.prompt, args.max_new_tokens, args.temperature, profiler):
