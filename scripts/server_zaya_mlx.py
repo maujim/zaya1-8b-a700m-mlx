@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import json
 import time
 import uuid
@@ -146,12 +145,10 @@ def create_app() -> FastAPI:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Serve the local ZAYA MLX port via an OpenAI-compatible API.")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8123)
-    args = parser.parse_args()
-
-    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info")
+    # Hard-coded to match the project-local pi extension in
+    # .pi/extensions/zaya-mlx.ts, so startup is just:
+    #   uv run python scripts/server_zaya_mlx.py
+    uvicorn.run(create_app(), host="127.0.0.1", port=8123, log_level="info")
 
 
 if __name__ == "__main__":
