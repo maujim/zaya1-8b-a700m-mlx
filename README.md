@@ -30,7 +30,7 @@ Load with Hugging Face/Transformers/PyTorch, CPU by default:
 uv run python scripts/load_zaya_hf.py
 ```
 
-Ask the MLX model to write a tiny Python sum function, profiled by default:
+Ask the MLX model to write a tiny Python sum function, profiled by default. The wrapper defaults to `--quant q4` for local speed; pass `--quant full` if you need full BF16.
 
 ```bash
 ./scripts/run_python_sum_mlx.sh
@@ -45,7 +45,7 @@ Try in-memory quantization, no extra model copy on disk. Quantized modes skip th
 ./scripts/run_python_sum_mlx.sh --quant q8 --q8-min-weight-size 0  # slower startup, exhaustive
 ```
 
-Run the OpenAI-compatible MLX server. Fast generation paths are on by default (`--cache` and `--moe-decode-fast-path`); pass `--no-cache` or `--no-moe-decode-fast-path` to compare old behavior. Streaming responses use SSE when the request includes `"stream": true`. Generation is serialized with an in-process lock; this fiddle server is intentionally one request at a time.
+Run the OpenAI-compatible MLX server. It defaults to `--quant q4` plus fast generation paths (`--cache` and `--moe-decode-fast-path`) for local speed; pass `--quant full`, `--no-cache`, or `--no-moe-decode-fast-path` to compare old behavior. Streaming responses use SSE when the request includes `"stream": true`. Generation is serialized with an in-process lock; this fiddle server is intentionally one request at a time.
 
 ```bash
 uv run python scripts/server_zaya_mlx.py --port 8123
@@ -90,7 +90,7 @@ The script exits nonzero on any mismatch.
 
 ## Speed benchmarking
 
-Use the conservative benchmark wrapper for before/after speed loops. It writes profile JSON with prefill/decode stats and defaults to 32 generated tokens so it is less aggressive on 24GB machines than the full Python-sum wrapper.
+Use the conservative benchmark wrapper for before/after speed loops. It writes profile JSON with prefill/decode stats and defaults to q4 plus 32 generated tokens so it is less aggressive on 24GB machines than the full Python-sum wrapper.
 
 ```bash
 scripts/benchmark_speed.sh

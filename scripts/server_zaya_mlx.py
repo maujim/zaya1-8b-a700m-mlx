@@ -89,7 +89,7 @@ def usage_payload(prompt_tokens: int, completion_tokens: int) -> dict[str, int]:
 
 
 def create_app(
-    quant: str = "full",
+    quant: str = "q4",
     moe_decode_fast_path: bool = True,
     use_cache: bool = True,
     q8_min_weight_size: int = 1_000_000,
@@ -200,7 +200,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Serve the local ZAYA MLX port via an OpenAI-compatible API.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8123)
-    parser.add_argument("--quant", choices=QUANT_CHOICES, default="full", help="Weight mode: full BF16 weights or dynamic in-memory q8/q6/q4 quantization after load.")
+    parser.add_argument("--quant", choices=QUANT_CHOICES, default="q4", help="Weight mode: full BF16 weights or dynamic in-memory q8/q6/q4 quantization after load (default: q4 for local speed).")
     parser.add_argument(
         "--q8-min-weight-size",
         type=int,

@@ -10,7 +10,7 @@ with prefill/decode stats suitable for before/after speed loops.
 
 Defaults are intentionally modest for 24GB RAM:
   --max-new-tokens: 32 (override with MAX_NEW_TOKENS or CLI)
-  --quant: full unless forwarded with --quant q8
+  --quant: q4 unless forwarded with --quant full/q8/q6/q4
   cache and MoE decode fast path: runner defaults (on)
 
 Examples:
@@ -51,14 +51,44 @@ has_arg() {
 
 args=(
   --profile
+  --quant "${QUANT:-q4}"
   --max-new-tokens "${MAX_NEW_TOKENS:-32}"
   --temperature "${TEMPERATURE:-0}"
   --profile-json "${PROFILE_JSON:-$DEFAULT_PROFILE_JSON}"
   "$PROMPT"
 )
 
+if has_arg --quant "$@"; then
+  filtered=()
+  skip_next=0
+  for arg in "${args[@]}"; do
+    if (( skip_next )); then
+      skip_next=0
+      continue
+    fi
+    if [[ "$arg" == "--quant" ]]; then
+      skip_next=1
+      continue
+    fi
+    filtered+=("$arg")
+  done
+  args=("${filtered[@]}")
+fi
 if has_arg --max-new-tokens "$@"; then
-  args=(--profile --temperature "${TEMPERATURE:-0}" --profile-json "${PROFILE_JSON:-$DEFAULT_PROFILE_JSON}" "$PROMPT")
+  filtered=()
+  skip_next=0
+  for arg in "${args[@]}"; do
+    if (( skip_next )); then
+      skip_next=0
+      continue
+    fi
+    if [[ "$arg" == "--max-new-tokens" ]]; then
+      skip_next=1
+      continue
+    fi
+    filtered+=("$arg")
+  done
+  args=("${filtered[@]}")
 fi
 if has_arg --temperature "$@"; then
   filtered=()
