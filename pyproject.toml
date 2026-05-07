@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.11.0",
+    "fastapi>=0.136.1",
     "huggingface-hub>=0.34.0,<1.0",
     "mlx>=0.31.2",
     "mlx-lm>=0.29.1",
@@ -11,6 +12,7 @@ dependencies = [
     "sentencepiece>=0.2.0",
     "torch>=2.9.0",
     "transformers @ git+https://github.com/Zyphra/transformers.git@zaya1",
+    "uvicorn>=0.46.0",
 ]
 
 [tool.uv]

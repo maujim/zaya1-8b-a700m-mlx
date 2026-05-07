@@ -12,6 +12,7 @@ Use `uv run ...` for Python commands.
 uv run python scripts/load_zaya_mlx.py
 uv run python scripts/load_zaya_hf.py
 uv run python scripts/run_python_sum_mlx.py
+uv run python scripts/server_zaya_mlx.py --port 8123
 ```
 
 For a detailed generation trace:
@@ -26,4 +27,5 @@ uv run python scripts/run_python_sum_mlx.py --profile-layers
 - The scripts should assume the Hugging Face snapshot is usually cached, but allow `snapshot_download()` to fetch it if missing.
 - Avoid adding `--local-files-only` flags to the main scripts.
 - `scripts/run_zaya_mlx.py` is the MLX implementation/library used by the simpler scripts.
+- `.pi/extensions/zaya-mlx.ts` registers the local OpenAI-compatible server as `zaya-mlx/zaya-mlx` for pi.
 - Current likely performance targets: generation cache support and avoiding full-batch evaluation of every MoE expert.
